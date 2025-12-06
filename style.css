@@ -1,10 +1,17 @@
 /* ========== CSS 樣式 ========== */
+html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* 防止滾動條 */
+}
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
     font-family: 'Microsoft JhengHei', 'PingFang HK', sans-serif;
     background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
-    overflow: hidden;
     color: #fff;
 }
 
@@ -27,6 +34,7 @@ body {
     justify-content: space-between;
     padding: 0 40px;
     border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    z-index: 100;
 }
 
 .logo { display: flex; align-items: center; gap: 16px; }
@@ -58,6 +66,7 @@ body {
     backdrop-filter: blur(10px);
     border-right: 2px solid rgba(255, 255, 255, 0.1);
     padding: 24px; overflow-y: auto;
+    z-index: 90;
 }
 .panel-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 20px; display: flex; gap: 10px; }
 .shape-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
@@ -80,6 +89,7 @@ body {
 .center-stage {
     grid-row: 2 / 3; position: relative;
     background: radial-gradient(circle at center, rgba(255, 255, 255, 0.05), transparent);
+    overflow: hidden;
 }
 #canvas-container { width: 100%; height: 100%; position: relative; }
 
@@ -90,6 +100,7 @@ body {
     font-size: 1.1rem; font-weight: 600;
     border: 2px solid rgba(255, 255, 255, 0.2); z-index: 10;
     animation: float 3s ease-in-out infinite;
+    white-space: nowrap;
 }
 @keyframes float { 0%, 100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-10px); } }
 
@@ -122,6 +133,7 @@ body {
     background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(10px);
     border-left: 2px solid rgba(255, 255, 255, 0.1);
     padding: 24px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;
+    z-index: 90;
 }
 .section-preview { background: rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 20px; border: 2px solid rgba(255, 255, 255, 0.2); }
 #section-canvas { width: 100%; height: 280px; background: rgba(0, 0, 0, 0.3); border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.1); }
@@ -139,6 +151,7 @@ body {
     background: rgba(0, 0, 0, 0.4); backdrop-filter: blur(10px);
     border-top: 2px solid rgba(255, 255, 255, 0.1);
     display: flex; align-items: center; justify-content: space-between; padding: 0 40px;
+    z-index: 100;
 }
 .gesture-guide { display: flex; gap: 30px; }
 .gesture-item {
@@ -175,8 +188,40 @@ body {
 .loading-text { font-size: 1.5rem; font-weight: 700; margin-bottom: 12px; }
 .loading-progress { font-size: 1rem; opacity: 0.8; }
 
-@media (max-width: 1400px) { #app { grid-template-columns: 280px 1fr 320px; } }
+/* RWD 響應式設計 */
+@media (max-width: 1400px) { 
+    #app { grid-template-columns: 280px 1fr 320px; } 
+}
+
+/* 手機/平板模式：垂直佈局 */
+@media (max-width: 1000px) {
+    #app {
+        height: auto;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+    }
+    html, body { overflow-y: auto; }
+
+    .top-bar { position: sticky; top: 0; padding: 10px 20px; flex-direction: column; gap: 10px; height: auto; }
+    .logo-text h1 { font-size: 1.4rem; }
+    .hand-status { width: 100%; justify-content: center; }
+
+    .center-stage { height: 500px; width: 100%; order: 1; } /* 畫布優先顯示 */
+    
+    .left-panel { order: 2; width: 100%; height: auto; overflow: visible; }
+    .shape-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    
+    .right-panel { order: 3; width: 100%; height: auto; overflow: visible; }
+    
+    .bottom-bar { order: 4; position: sticky; bottom: 0; padding: 10px; flex-direction: column; gap: 10px; height: auto; }
+    .gesture-guide { flex-wrap: wrap; justify-content: center; }
+    
+    #camera-container { bottom: 80px !important; left: 10px !important; width: 160px !important; height: 120px !important; }
+    .cut-indicator { width: 90%; padding: 10px; gap: 10px; bottom: 10px; }
+    .cut-info-value { font-size: 1rem; }
+}
+
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.1); }
 ::-webkit-scrollbar-thumb { background: rgba(96, 165, 250, 0.5); border-radius: 4px; }
-

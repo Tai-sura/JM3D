@@ -20,14 +20,12 @@ class LerpValue {
 export class HandTracker {
     constructor(videoElement, onUpdate) {
         this.video = videoElement;
-        this.onUpdate = onUpdate; // Callback(gesture, smoothedY)
+        this.onUpdate = onUpdate; 
         this.handLandmarker = null;
         this.isRunning = false;
         this.lastGesture = 'none';
         this.gestureStableCount = 0;
-        
-        // Smoothing for Y position
-        this.smoothedY = new LerpValue(0, 0.15); // 0.15 speed for responsiveness/smoothness balance
+        this.smoothedY = new LerpValue(0, 0.15);
     }
 
     async init() {
@@ -52,27 +50,110 @@ export class HandTracker {
     }
 
     async start() {
-        if (!this.handLandmarker) await this.init();
+        // If running, assume this is a stop request
+        if (this.isRunning) {
+            this.stop();
+            const btn = document.getElementById('start-camera-btn');
+            if (btn) {
+                btn.textContent = '開啟鏡頭';
+                btn.style.background = '#22c55e';
+                // Re-binding is handled by main.js logic or permanent listener
+            }
+            this.hideError();
+            return;
+        }
+
+        // Check for File Protocol immediately to save user frustration
+        if (window.location.protocol === 'file:') {
+            this.showError(`
+                <div style="font-weight:bold; font-size:1.1rem; margin-bottom:10px;">瀏覽器安全性限制</div>
+                無法直接從檔案 (file://) 存取攝像頭。<br><br>
+                請使用 <strong>Local Server</strong> 運行此網頁。
+            `);
+            const btn = document.getElementById('start-camera-btn');
+            if (btn) {
+                btn.style.display = 'block';
+                btn.textContent = '開啟鏡頭 (受限模式)';
+                btn.style.background = '#64748b';
+            }
+            return;
+        }
+
+        if (!this.handLandmarker) {
+            const success = await this.init();
+            if (!success) {
+                this.showError("MediaPipe 初始化失敗<br>請檢查網絡連線");
+                return;
+            }
+        }
         
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { width: {ideal: 1280}, height: {ideal: 720}, facingMode: "user" } 
-            });
+            const constraints = { 
+                video: { 
+                    width: { ideal: 1280 }, 
+                    height: { ideal: 720 }, 
+                    facingMode: "user" 
+                } 
+            };
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             this.video.srcObject = stream;
-            this.video.addEventListener('loadeddata', () => {
+            
+            // Wait for video to be ready
+            this.video.onloadeddata = () => {
                 this.isRunning = true;
+                this.video.play();
+                this.hideError();
                 this.loop();
-            });
+                const btn = document.getElementById('start-camera-btn');
+                if (btn) {
+                    btn.textContent = '關閉鏡頭';
+                    btn.style.background = '#ef4444';
+                }
+            };
         } catch (err) {
             console.error("Camera Error:", err);
-            throw err;
+            let msg = '無法啟動鏡頭';
+            
+            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                msg = '請允許瀏覽器存取鏡頭權限';
+            } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                msg = '找不到鏡頭裝置';
+            } else {
+                msg = `錯誤: ${err.message}`;
+            }
+            
+            this.showError(msg);
+            const btn = document.getElementById('start-camera-btn');
+            if (btn) {
+                btn.textContent = '重試開啟';
+                btn.style.background = '#eab308'; // Yellow for retry
+                btn.style.display = 'block';
+            }
         }
+    }
+
+    showError(msg) {
+        const errEl = document.getElementById('camera-error');
+        const msgEl = document.getElementById('camera-error-msg');
+        if (errEl && msgEl) {
+            errEl.style.display = 'flex';
+            msgEl.innerHTML = msg;
+        }
+    }
+
+    hideError() {
+        const errEl = document.getElementById('camera-error');
+        if (errEl) errEl.style.display = 'none';
+        const btn = document.getElementById('start-camera-btn');
+        if (btn) btn.style.display = 'block';
     }
 
     stop() {
         this.isRunning = false;
         if (this.video.srcObject) {
             this.video.srcObject.getTracks().forEach(track => track.stop());
+            this.video.srcObject = null;
         }
     }
 
@@ -89,13 +170,11 @@ export class HandTracker {
 
     processResults(results) {
         let gesture = 'none';
-        let targetY = null; // Normalized -1 to 1 or similar logic
 
         if (results.landmarks && results.landmarks.length > 0) {
             const hand = results.landmarks[0];
             const rawGesture = this.detectGesture(hand);
 
-            // Debounce gesture
             if (rawGesture === this.lastGesture) {
                 this.gestureStableCount++;
             } else {
@@ -107,13 +186,10 @@ export class HandTracker {
                 gesture = rawGesture;
             }
 
-            // Calculate Position (Y)
             if (gesture === 'open') {
                 const p0 = hand[0];
                 const p9 = hand[9];
                 const cy = (p0.y + p9.y) / 2;
-                // Original logic: let targetY = (0.5 - cy) * 8; clamp(-2, 2)
-                // We pass the raw target to the smoother
                 const rawTargetY = (0.5 - cy) * 8;
                 const clampedTargetY = Math.max(-2, Math.min(2, rawTargetY));
                 this.smoothedY.update(clampedTargetY);
@@ -122,8 +198,6 @@ export class HandTracker {
             gesture = 'none';
         }
 
-        // Step the smoother every frame regardless of detection to drift gently or stay put
-        // If no detection, maybe we don't update target, just stay
         const currentY = this.smoothedY.step();
         
         if (this.onUpdate) {
@@ -158,4 +232,3 @@ export class HandTracker {
         return 'none';
     }
 }
-
