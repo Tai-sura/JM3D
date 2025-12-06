@@ -171,8 +171,8 @@ export class SceneManager {
         if (this.isSliced || !this.cuttingPlane) return;
         
         // Increase smoothing (lower factor = more smoothing/lag)
-        // Increased to 0.4 for high sensitivity as requested
-        const smoothFactor = 0.4; 
+        // Increased to 0.5 for high sensitivity
+        const smoothFactor = 0.5; 
         this.currentRoll = THREE.MathUtils.lerp(this.currentRoll, roll, smoothFactor);
         
         this.cuttingPlane.rotation.z = this.currentRoll;
@@ -240,11 +240,10 @@ export class SceneManager {
             this.cutSurfaceLower.quaternion.copy(this.cuttingPlane.quaternion);
 
             // Rotate -90 around X to map XY geometry to XZ plane (matches visual plane basis)
-            // Since basisY in calculation is now -Z, this rotation correctly maps 
-            // the +Y geometry coord (which came from -Z basis) to -Z local space.
             this.cutSurfaceUpper.rotateX(-Math.PI / 2);
             this.cutSurfaceLower.rotateX(-Math.PI / 2);
             
+            // Initial Offsets
             this.cutSurfaceUpper.position.addScaledVector(normal, -0.01);
             this.cutSurfaceLower.position.addScaledVector(normal, 0.01);
 
@@ -493,14 +492,42 @@ export class SceneManager {
             const maxSeparation = 1.5;
 
             if (this.transformControls) this.transformControls.visible = false;
+            
+            // Recalculate normal and initial position from the frozen cutting plane
+            // Note: scene.cuttingPlane is frozen in position/rotation when isSliced is true
+            const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cuttingPlane.quaternion).normalize();
+            const initialPos = this.cuttingPlane.position;
 
             if (this.pieceA) {
                 this.pieceA.position.y = THREE.MathUtils.lerp(this.pieceA.position.y, maxSeparation, separationSpeed);
-                if (this.cutSurfaceUpper) this.cutSurfaceUpper.position.y = this.cuttingPlane.position.y + this.pieceA.position.y;
+                
+                // Update Clipping Plane Constant to match the moving mesh
+                // Plane point = InitialPlanePosition + MeshOffset
+                // constant = -normal.dot(point)
+                const posA = initialPos.clone().add(this.pieceA.position);
+                const planeA = this.pieceA.material.clippingPlanes[0];
+                if (planeA) planeA.constant = -normal.dot(posA);
+                
+                // Update Cap Position (Full update to handle tilted planes correctly)
+                if (this.cutSurfaceUpper) {
+                    this.cutSurfaceUpper.position.copy(posA).addScaledVector(normal, -0.01);
+                }
             }
+            
             if (this.pieceB) {
                 this.pieceB.position.y = THREE.MathUtils.lerp(this.pieceB.position.y, -maxSeparation, separationSpeed);
-                if (this.cutSurfaceLower) this.cutSurfaceLower.position.y = this.cuttingPlane.position.y + this.pieceB.position.y;
+                
+                // Update Clipping Plane Constant
+                // planeB normal is -normal
+                // constant = - (-normal).dot(point) = normal.dot(point)
+                const posB = initialPos.clone().add(this.pieceB.position);
+                const planeB = this.pieceB.material.clippingPlanes[0];
+                if (planeB) planeB.constant = normal.dot(posB);
+                
+                // Update Cap Position
+                if (this.cutSurfaceLower) {
+                    this.cutSurfaceLower.position.copy(posB).addScaledVector(normal, 0.01);
+                }
             }
         } else {
             if (this.cuttingPlane) {
