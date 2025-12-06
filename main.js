@@ -237,14 +237,19 @@ function calculateMeshPlaneIntersection(mesh, plane, planeObj = null) {
     let basisX, basisY, origin;
 
     if (planeObj) {
+        // Force update to ensure matrix is fresh
+        planeObj.updateMatrixWorld(true);
+        const mw = planeObj.matrixWorld;
+        const te = mw.elements;
+
         // Use planeObj's local system for accurate clipping
-        origin = planeObj.position;
-        const q = planeObj.quaternion;
+        origin = new THREE.Vector3().setFromMatrixPosition(mw);
         
-        // Visual plane is defined as XZ plane in the group local space
-        // (PlaneGeometry is XY, rotated -90 on X -> XZ)
-        basisX = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
-        basisY = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+        // Extract basis vectors directly from matrix columns
+        // Column 0 (X) and Column 2 (Z) corresponds to the plane size 7x7 axes
+        // (Visual plane is rotated X -90 inside the group, effectively lying on Group XZ plane)
+        basisX = new THREE.Vector3(te[0], te[1], te[2]).normalize();
+        basisY = new THREE.Vector3(te[8], te[9], te[10]).normalize();
     } else {
         // Fallback to robust arbitrary basis
         const n = plane.normal;
