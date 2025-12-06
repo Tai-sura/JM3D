@@ -146,8 +146,13 @@ function onHandUpdate(data) {
         // Update both Height and Rotation
         scene.updateCutHeight(data.y);
         if (typeof data.roll === 'number') {
-            // We multiply by -1 to make the rotation intuitive (tilting hand left rotates plane left)
-            scene.updateCutRotation(-data.roll);
+            // Apply Deadzone: if roll is small (< 5 deg ~ 0.08 rad), treat as 0
+            let roll = data.roll;
+            if (Math.abs(roll) < 0.08) roll = 0;
+            
+            // Scale down the rotation for finer control (e.g. 0.5x)
+            // Multiply by -1 for intuitive direction
+            scene.updateCutRotation(-roll * 0.5);
         }
         
         ui.updateCutInfo(data.y);

@@ -169,16 +169,12 @@ export class SceneManager {
     updateCutRotation(roll) {
         if (this.isSliced || !this.cuttingPlane) return;
         
-        // Smooth interpolation for rotation
-        const smoothFactor = 0.1; 
+        // Increase smoothing (lower factor = more smoothing/lag)
+        // Was 0.1, changing to 0.05 for heavier feel
+        const smoothFactor = 0.05; 
         this.currentRoll = THREE.MathUtils.lerp(this.currentRoll, roll, smoothFactor);
         
-        // Apply rotation to the Z axis of the group
-        // Since the plane is horizontal, rotating around Z (world) or Y (local?)
-        // Our plane group is at (0,y,0). 
-        // Rolling the hand means rotating around the depth axis (Z) from the camera's perspective.
         this.cuttingPlane.rotation.z = this.currentRoll;
-        // Also clamp X rotation if needed, but for now just Z (Roll) is enough for 2D tilting
     }
 
     performCut() {
