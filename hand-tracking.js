@@ -26,10 +26,53 @@ export class HandTracker {
         this.lastGesture = 'none';
         this.gestureStableCount = 0;
         this.smoothedY = new LerpValue(0, 0.15);
+        
+        // Create Debug Overlay
+        this.createDebugOverlay();
+    }
+
+    createDebugOverlay() {
+        this.debugEl = document.createElement('div');
+        this.debugEl.style.position = 'absolute';
+        this.debugEl.style.top = '0';
+        this.debugEl.style.left = '0';
+        this.debugEl.style.background = 'rgba(0, 0, 0, 0.7)';
+        this.debugEl.style.color = '#0f0';
+        this.debugEl.style.fontSize = '10px';
+        this.debugEl.style.padding = '4px';
+        this.debugEl.style.pointerEvents = 'none';
+        this.debugEl.style.zIndex = '100';
+        this.debugEl.style.display = 'none'; // Initially hidden, shown on start
+        
+        // Attach to parent of video if possible
+        if (this.video.parentElement) {
+            this.video.parentElement.appendChild(this.debugEl);
+            // Ensure parent is relative so absolute positioning works
+            if (getComputedStyle(this.video.parentElement).position === 'static') {
+                this.video.parentElement.style.position = 'relative';
+            }
+        }
+    }
+
+    updateDebugInfo(msg) {
+        if (this.debugEl) {
+            this.debugEl.style.display = 'block';
+            const v = this.video;
+            const stateNames = ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'];
+            const info = `
+                Status: ${msg}<br>
+                Size: ${v.videoWidth}x${v.videoHeight}<br>
+                Ready: ${v.readyState} (${stateNames[v.readyState] || '?'})<br>
+                Paused: ${v.paused}<br>
+                Muted: ${v.muted}
+            `;
+            this.debugEl.innerHTML = info;
+        }
     }
 
     async initLandmarker() {
         try {
+            this.updateDebugInfo('Loading AI Model...');
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
             this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
                 baseOptions: {
@@ -42,15 +85,16 @@ export class HandTracker {
                 minHandPresenceConfidence: 0.6,
                 minTrackingConfidence: 0.6
             });
+            this.updateDebugInfo('AI Ready');
             return true;
         } catch (error) {
             console.error('MediaPipe Init Error:', error);
+            this.updateDebugInfo('AI Error: ' + error.message);
             return false;
         }
     }
 
     async start() {
-        // If running, assume this is a stop request
         if (this.isRunning) {
             this.stop();
             const btn = document.getElementById('start-camera-btn');
@@ -59,27 +103,16 @@ export class HandTracker {
                 btn.style.background = '#22c55e';
             }
             this.hideError();
+            if (this.debugEl) this.debugEl.style.display = 'none';
             return;
         }
 
-        // Check for File Protocol
         if (window.location.protocol === 'file:') {
-            this.showError(`
-                <div style="font-weight:bold; font-size:1.1rem; margin-bottom:10px;">瀏覽器安全性限制</div>
-                無法直接從檔案 (file://) 存取攝像頭。<br><br>
-                請使用 <strong>Local Server</strong> 運行此網頁。
-            `);
-            const btn = document.getElementById('start-camera-btn');
-            if (btn) {
-                btn.style.display = 'block';
-                btn.textContent = '開啟鏡頭 (受限模式)';
-                btn.style.background = '#64748b';
-            }
+            this.showError('Local file access blocked. Use local server.');
             return;
         }
         
         try {
-            // Step 1: Request Camera Permission & Stream FIRST
             const constraints = { 
                 video: { 
                     width: { ideal: 1280 }, 
@@ -88,19 +121,42 @@ export class HandTracker {
                 } 
             };
 
+            this.updateDebugInfo('Requesting Stream...');
             console.log('Requesting camera stream...');
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            console.log('Camera stream acquired:', stream);
+            
+            this.updateDebugInfo('Stream Acquired. Attaching...');
+            console.log('Stream acquired:', stream);
 
-            // Step 2: Set Video Attributes explicitly
+            // Critical: Wait for metadata before playing
             this.video.srcObject = stream;
             this.video.playsInline = true;
-            this.video.autoplay = true;
-            this.video.muted = true;
+            this.video.muted = true; // Must be muted for autoplay
+
+            // Reset styles that might hide video
+            this.video.style.display = 'block';
+            this.video.style.visibility = 'visible';
+            this.video.style.opacity = '1';
             
-            // Step 3: Play video and handle promise
-            await this.video.play();
-            console.log('Video playback started');
+            // Wait for metadata to ensure we have dimensions
+            await new Promise((resolve) => {
+                this.video.onloadedmetadata = () => {
+                    console.log('Metadata loaded:', this.video.videoWidth, this.video.videoHeight);
+                    this.updateDebugInfo('Meta Loaded');
+                    resolve();
+                };
+                // Timeout fallback in case event doesn't fire (sometimes happens if cached)
+                setTimeout(resolve, 1000);
+            });
+
+            try {
+                await this.video.play();
+                this.updateDebugInfo('Playing...');
+            } catch (e) {
+                console.error('Play failed:', e);
+                this.updateDebugInfo('Play Fail: ' + e.message);
+                throw e;
+            }
 
             this.isRunning = true;
             this.hideError();
@@ -111,39 +167,25 @@ export class HandTracker {
                 btn.style.background = '#ef4444';
             }
 
-            // Step 4: Initialize AI in background (don't block video)
+            // Start Debug Loop to update stats
+            this.debugTimer = setInterval(() => {
+                if (this.isRunning) this.updateDebugInfo('Running');
+            }, 1000);
+
+            // Initialize AI
             if (!this.handLandmarker) {
-                console.log('Initializing Hand Landmarker...');
-                const success = await this.initLandmarker();
-                if (!success) {
-                    console.error('MediaPipe failed to load, but camera is running.');
-                    // Can optionally show a toast warning here, but keep camera running
-                } else {
-                    console.log('Hand Landmarker ready');
-                }
+                this.updateDebugInfo('Init AI...');
+                // Don't await here to keep video running
+                this.initLandmarker().then(success => {
+                    if (!success) console.warn('AI Failed');
+                });
             }
             
             this.loop();
 
         } catch (err) {
-            console.error("Camera/Init Error:", err);
-            let msg = '無法啟動鏡頭';
-            
-            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                msg = '請允許瀏覽器存取鏡頭權限';
-            } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                msg = '找不到鏡頭裝置';
-            } else {
-                msg = `錯誤: ${err.message}`;
-            }
-            
-            this.showError(msg);
-            const btn = document.getElementById('start-camera-btn');
-            if (btn) {
-                btn.textContent = '重試開啟';
-                btn.style.background = '#eab308';
-                btn.style.display = 'block';
-            }
+            console.error("Camera Error:", err);
+            this.showError('Camera Error: ' + err.message);
             this.isRunning = false;
         }
     }
@@ -166,6 +208,7 @@ export class HandTracker {
 
     stop() {
         this.isRunning = false;
+        if (this.debugTimer) clearInterval(this.debugTimer);
         if (this.video.srcObject) {
             this.video.srcObject.getTracks().forEach(track => track.stop());
             this.video.srcObject = null;
@@ -175,9 +218,14 @@ export class HandTracker {
     async loop() {
         if (!this.isRunning) return;
 
-        if (this.handLandmarker && this.video.readyState >= 2) {
-            const results = await this.handLandmarker.detectForVideo(this.video, performance.now());
-            this.processResults(results);
+        // Only detect if video has data and dimensions
+        if (this.handLandmarker && this.video.readyState >= 2 && this.video.videoWidth > 0) {
+            try {
+                const results = await this.handLandmarker.detectForVideo(this.video, performance.now());
+                this.processResults(results);
+            } catch (e) {
+                console.error('Detection error:', e);
+            }
         }
 
         requestAnimationFrame(() => this.loop());
@@ -185,22 +233,16 @@ export class HandTracker {
 
     processResults(results) {
         let gesture = 'none';
-
         if (results.landmarks && results.landmarks.length > 0) {
             const hand = results.landmarks[0];
             const rawGesture = this.detectGesture(hand);
-
             if (rawGesture === this.lastGesture) {
                 this.gestureStableCount++;
             } else {
                 this.gestureStableCount = 0;
                 this.lastGesture = rawGesture;
             }
-
-            if (this.gestureStableCount > 3) {
-                gesture = rawGesture;
-            }
-
+            if (this.gestureStableCount > 3) gesture = rawGesture;
             if (gesture === 'open') {
                 const p0 = hand[0];
                 const p9 = hand[9];
@@ -209,12 +251,8 @@ export class HandTracker {
                 const clampedTargetY = Math.max(-2, Math.min(2, rawTargetY));
                 this.smoothedY.update(clampedTargetY);
             }
-        } else {
-            gesture = 'none';
         }
-
         const currentY = this.smoothedY.step();
-        
         if (this.onUpdate) {
             this.onUpdate({
                 gesture: gesture,
@@ -231,17 +269,14 @@ export class HandTracker {
             { tip: 8, pip: 6 }, { tip: 12, pip: 10 }, 
             { tip: 16, pip: 14 }, { tip: 20, pip: 18 }
         ];
-
         fingerIndices.forEach(({tip, pip}) => {
             const tipDist = Math.hypot(hand[tip].x - wrist.x, hand[tip].y - wrist.y, hand[tip].z - wrist.z);
             const pipDist = Math.hypot(hand[pip].x - wrist.x, hand[pip].y - wrist.y, hand[pip].z - wrist.z);
             if (tipDist < pipDist * 1.1) curledFingers++;
         });
-
         const thumbTip = hand[4];
         const pinkyBase = hand[17];
         if (Math.hypot(thumbTip.x - pinkyBase.x, thumbTip.y - pinkyBase.y) < 0.15) curledFingers++;
-
         if (curledFingers >= 4) return 'fist';
         if (curledFingers <= 1) return 'open';
         return 'none';
