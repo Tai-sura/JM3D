@@ -202,8 +202,7 @@ export class SceneManager {
         // 2. Setup Piece A (Upper)
         const materialA = new THREE.MeshStandardMaterial({
             color: 0x60a5fa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide,
-            clippingPlanes: [planeA], clipShadows: true,
-            stencilWrite: true, stencilRef: 0, stencilFunc: THREE.AlwaysStencilFunc, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
+            clippingPlanes: [planeA], clipShadows: true
         });
         this.pieceA = new THREE.Mesh(baseGeometry.clone(), materialA);
         this.scene.add(this.pieceA);
@@ -211,18 +210,16 @@ export class SceneManager {
         // 3. Setup Piece B (Lower)
         const materialB = new THREE.MeshStandardMaterial({
             color: 0xa78bfa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide,
-            clippingPlanes: [planeB], clipShadows: true,
-            stencilWrite: true, stencilRef: 0, stencilFunc: THREE.AlwaysStencilFunc, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
+            clippingPlanes: [planeB], clipShadows: true
         });
         this.pieceB = new THREE.Mesh(baseGeometry.clone(), materialB);
         this.scene.add(this.pieceB);
 
-        // 4. Create Stencil Caps (The "Solid" fill)
+        // 4. Create Stencil Caps
         const createStencilLogic = (mesh, plane, color, renderOrderBase) => {
             const group = new THREE.Group();
             this.scene.add(group);
 
-            // Pass 1: Back faces, Increment Stencil
             const matBack = new THREE.MeshBasicMaterial({
                 colorWrite: false, depthWrite: false, side: THREE.BackSide,
                 clippingPlanes: [plane],
@@ -233,7 +230,6 @@ export class SceneManager {
             meshBack.renderOrder = renderOrderBase;
             group.add(meshBack);
 
-            // Pass 2: Front faces, Decrement Stencil
             const matFront = new THREE.MeshBasicMaterial({
                 colorWrite: false, depthWrite: false, side: THREE.FrontSide,
                 clippingPlanes: [plane],
@@ -244,7 +240,6 @@ export class SceneManager {
             meshFront.renderOrder = renderOrderBase + 1;
             group.add(meshFront);
 
-            // Pass 3: The Cap Plane
             const planeGeom = new THREE.PlaneGeometry(100, 100);
             const matPlane = new THREE.MeshStandardMaterial({
                 color: color, side: THREE.DoubleSide, 
@@ -254,18 +249,28 @@ export class SceneManager {
             });
             const capMesh = new THREE.Mesh(planeGeom, matPlane);
             capMesh.renderOrder = renderOrderBase + 2;
-            
-            // Align cap mesh to the clipping plane initially
             capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), plane.normal);
             capMesh.position.copy(new THREE.Vector3().copy(plane.normal).multiplyScalar(-plane.constant));
-            
             this.scene.add(capMesh);
 
             return { group, capMesh, meshBack, meshFront };
         };
 
-        // Create caps for both pieces
+        const createStencilClearer = (renderOrder) => {
+            const planeGeom = new THREE.PlaneGeometry(100, 100);
+            const mat = new THREE.MeshBasicMaterial({
+                colorWrite: false, depthWrite: false, depthTest: false,
+                stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, stencilOp: THREE.ReplaceStencilOp, stencilRef: 0
+            });
+            const mesh = new THREE.Mesh(planeGeom, mat);
+            mesh.renderOrder = renderOrder;
+            this.scene.add(mesh);
+            return mesh;
+        };
+
         this.stencilCapA = createStencilLogic(this.pieceA, planeA, 0xfbbf24, 1);
+        // Clear stencil after A and before B to prevent B's cap from drawing on A's stencil
+        this.stencilClearer = createStencilClearer(5); 
         this.stencilCapB = createStencilLogic(this.pieceB, planeB, 0xfbbf24, 10);
     }
 
@@ -607,23 +612,23 @@ export class SceneManager {
             if (this.transformControls) this.transformControls.visible = false;
             
             // Recalculate normal and initial position from the frozen cutting plane
-            // Note: scene.cuttingPlane is frozen in position/rotation when isSliced is true
             const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cuttingPlane.quaternion).normalize();
             const initialPos = this.cuttingPlane.position;
 
             if (this.pieceA) {
                 this.pieceA.position.y = THREE.MathUtils.lerp(this.pieceA.position.y, maxSeparation, separationSpeed);
                 
-                // Update Clipping Plane Constant to match the moving mesh
-                // Plane point = InitialPlanePosition + MeshOffset
-                // constant = -normal.dot(point)
+                // Update Clipping Plane Constant
                 const posA = initialPos.clone().add(this.pieceA.position);
                 const planeA = this.pieceA.material.clippingPlanes[0];
                 if (planeA) planeA.constant = -normal.dot(posA);
                 
-                // Update Cap Position (Full update to handle tilted planes correctly)
-                if (this.cutSurfaceUpper) {
-                    this.cutSurfaceUpper.position.copy(posA).addScaledVector(normal, -0.01);
+                // Update Stencil Meshes Position
+                if (this.stencilCapA) {
+                    this.stencilCapA.group.position.copy(this.pieceA.position);
+                    // Cap Plane must match the clipping plane exactly
+                    const coplanarPoint = new THREE.Vector3().copy(normal).multiplyScalar(-planeA.constant);
+                    this.stencilCapA.capMesh.position.copy(coplanarPoint);
                 }
             }
             
@@ -631,15 +636,15 @@ export class SceneManager {
                 this.pieceB.position.y = THREE.MathUtils.lerp(this.pieceB.position.y, -maxSeparation, separationSpeed);
                 
                 // Update Clipping Plane Constant
-                // planeB normal is -normal
-                // constant = - (-normal).dot(point) = normal.dot(point)
                 const posB = initialPos.clone().add(this.pieceB.position);
                 const planeB = this.pieceB.material.clippingPlanes[0];
                 if (planeB) planeB.constant = normal.dot(posB);
                 
-                // Update Cap Position
-                if (this.cutSurfaceLower) {
-                    this.cutSurfaceLower.position.copy(posB).addScaledVector(normal, 0.01);
+                // Update Stencil Meshes Position
+                if (this.stencilCapB) {
+                    this.stencilCapB.group.position.copy(this.pieceB.position);
+                    const coplanarPointB = new THREE.Vector3().copy(planeB.normal).multiplyScalar(-planeB.constant);
+                    this.stencilCapB.capMesh.position.copy(coplanarPointB);
                 }
             }
         } else {
