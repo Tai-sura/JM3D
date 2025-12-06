@@ -1,0 +1,277 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SHAPES, getCrossSectionData } from './shapes.js';
+
+export class SceneManager {
+    constructor(containerId) {
+        this.container = document.getElementById(containerId);
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.controls = null;
+        
+        this.objectMesh = null;
+        this.cuttingPlane = null;
+        this.currentShapeType = 'cylinder';
+        
+        // Cut pieces
+        this.pieceA = null;
+        this.pieceB = null;
+        this.cutSurfaceUpper = null;
+        this.cutSurfaceLower = null;
+        
+        this.isSliced = false;
+        this.currentY = 0;
+        this.onAnimate = null;
+    }
+
+    init() {
+        // Scene
+        this.scene = new THREE.Scene();
+        this.scene.fog = new THREE.Fog(0x1e3c72, 5, 20);
+
+        // Camera
+        this.camera = new THREE.PerspectiveCamera(50, this.container.clientWidth / this.container.clientHeight, 0.1, 1000);
+        this.camera.position.set(0, 6, 9);
+
+        // Renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+        this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.localClippingEnabled = true;
+        this.container.appendChild(this.renderer.domElement);
+
+        // Controls
+        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.05;
+        this.controls.minDistance = 5;
+        this.controls.maxDistance = 15;
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        this.scene.add(ambientLight);
+        
+        const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        mainLight.position.set(5, 10, 7);
+        mainLight.castShadow = true;
+        this.scene.add(mainLight);
+        
+        const fillLight = new THREE.DirectionalLight(0x60a5fa, 0.4);
+        fillLight.position.set(-5, 3, -5);
+        this.scene.add(fillLight);
+
+        // Grid
+        const gridHelper = new THREE.GridHelper(20, 20, 0x60a5fa, 0x2a5298);
+        gridHelper.position.y = -3;
+        gridHelper.material.opacity = 0.3;
+        gridHelper.material.transparent = true;
+        this.scene.add(gridHelper);
+
+        // Initial Objects
+        this.createCuttingPlane();
+        this.loadShape('cylinder');
+
+        // Event Listeners
+        window.addEventListener('resize', () => this.onWindowResize());
+        
+        // Start Loop
+        this.animate();
+    }
+
+    createCuttingPlane() {
+        if (this.cuttingPlane) this.scene.remove(this.cuttingPlane);
+        const group = new THREE.Group();
+        const geometry = new THREE.PlaneGeometry(7, 7);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0x60a5fa, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
+            emissive: 0x60a5fa, emissiveIntensity: 0.2
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.rotation.x = -Math.PI / 2; 
+        group.add(mesh);
+        
+        const edges = new THREE.EdgesGeometry(geometry);
+        const lineMaterial = new THREE.LineBasicMaterial({ color: 0x60a5fa, linewidth: 3 });
+        const line = new THREE.LineSegments(edges, lineMaterial);
+        line.rotation.x = -Math.PI / 2;
+        group.add(line);
+        
+        this.scene.add(group);
+        this.cuttingPlane = group;
+    }
+
+    loadShape(shapeType) {
+        if (this.isSliced) this.reset();
+        this.currentShapeType = shapeType;
+        
+        if (this.objectMesh) {
+            this.scene.remove(this.objectMesh);
+            this.objectMesh.geometry.dispose();
+            this.objectMesh.material.dispose();
+        }
+
+        const shape = SHAPES[shapeType];
+        const geometry = shape.geometry();
+        const material = new THREE.MeshStandardMaterial({
+            color: 0x60a5fa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide
+        });
+
+        this.objectMesh = new THREE.Mesh(geometry, material);
+        this.objectMesh.castShadow = true;
+        this.objectMesh.receiveShadow = true;
+        this.scene.add(this.objectMesh);
+    }
+
+    updateCutHeight(y) {
+        if (this.isSliced) return;
+        this.currentY = y;
+        if (this.cuttingPlane) {
+            this.cuttingPlane.position.y = y;
+        }
+    }
+
+    performCut() {
+        if (this.isSliced) return;
+        this.isSliced = true;
+        
+        if (this.objectMesh) this.objectMesh.visible = false;
+        if (this.cuttingPlane) this.cuttingPlane.visible = false; // Hide plane after cut? Or keep? Original kept it but maybe better to hide or keep.
+        // Original code: cuttingPlane.visible = true (in reset), but performCut didn't hide it explicitly? 
+        // Ah, createCutPieces adds things.
+        // Let's hide the plane for clarity or keep it frozen. 
+        // Original user code didn't hide it in `performCut`. 
+        // I will keep it visible but static.
+
+        const position = new THREE.Vector3(0, this.currentY, 0);
+        const normal = new THREE.Vector3(0, 1, 0);
+
+        this.createCutPieces(position, normal);
+    }
+
+    createCutPieces(position, normal) {
+        const shape = SHAPES[this.currentShapeType];
+        const geometry = shape.geometry();
+
+        // Piece A (Upper)
+        const planeA = new THREE.Plane();
+        planeA.setFromNormalAndCoplanarPoint(normal, position);
+        const materialA = new THREE.MeshStandardMaterial({
+            color: 0x60a5fa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide,
+            clippingPlanes: [planeA], clipShadows: true
+        });
+        this.pieceA = new THREE.Mesh(geometry.clone(), materialA);
+        this.scene.add(this.pieceA);
+
+        // Piece B (Lower)
+        const planeB = planeA.clone().negate();
+        const materialB = new THREE.MeshStandardMaterial({
+            color: 0xa78bfa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide,
+            clippingPlanes: [planeB], clipShadows: true
+        });
+        this.pieceB = new THREE.Mesh(geometry.clone(), materialB);
+        this.scene.add(this.pieceB);
+
+        // Caps
+        const sectionData = getCrossSectionData(this.currentShapeType, position.y);
+        if (sectionData && sectionData.points.length >= 3) {
+            const shape2D = new THREE.Shape();
+            const points = sectionData.points;
+            const scale = sectionData.actualSize / 100; // Rough scaling factor from original code logic
+            // Original logic: scale = actualSize/100; points = (p-166)*scale*0.015?
+            // Wait, original code: 
+            // scale = sectionData.actualSize / 100;
+            // shape2D.moveTo((points[0].x - 166) * scale * 0.015, ...);
+            // 166, 140 was center of canvas.
+            // In `shapes.js` createCircle uses 166, 140 as center.
+            // So we need to offset back to 0,0.
+            
+            const cx = 166;
+            const cy = 140;
+            const magicScale = 0.015 * (sectionData.actualSize / 100); // Preserving original magic numbers
+
+            // The points in shape config are in canvas coords (approx 0-300).
+            // We need to map them to world coords approx (-2 to 2).
+            
+            // Let's trust the points are centered at cx, cy.
+            shape2D.moveTo((points[0].x - cx) * magicScale, (points[0].y - cy) * magicScale);
+            for (let i = 1; i < points.length; i++) {
+                shape2D.lineTo((points[i].x - cx) * magicScale, (points[i].y - cy) * magicScale);
+            }
+
+            const capGeometry = new THREE.ShapeGeometry(shape2D);
+            capGeometry.rotateX(-Math.PI / 2);
+            
+            const capMaterial = new THREE.MeshStandardMaterial({
+                color: 0xfbbf24, side: THREE.DoubleSide, emissive: 0xfbbf24, emissiveIntensity: 0.4
+            });
+
+            this.cutSurfaceUpper = new THREE.Mesh(capGeometry, capMaterial);
+            this.cutSurfaceUpper.position.copy(position);
+            this.cutSurfaceUpper.position.y -= 0.01;
+            this.scene.add(this.cutSurfaceUpper);
+
+            this.cutSurfaceLower = new THREE.Mesh(capGeometry.clone(), capMaterial);
+            this.cutSurfaceLower.position.copy(position);
+            this.cutSurfaceLower.position.y += 0.01;
+            this.scene.add(this.cutSurfaceLower);
+        }
+    }
+
+    reset() {
+        this.isSliced = false;
+        
+        if (this.pieceA) { this.scene.remove(this.pieceA); this.pieceA = null; }
+        if (this.pieceB) { this.scene.remove(this.pieceB); this.pieceB = null; }
+        if (this.cutSurfaceUpper) { this.scene.remove(this.cutSurfaceUpper); this.cutSurfaceUpper = null; }
+        if (this.cutSurfaceLower) { this.scene.remove(this.cutSurfaceLower); this.cutSurfaceLower = null; }
+        
+        if (this.objectMesh) {
+            this.objectMesh.visible = true;
+            this.objectMesh.position.set(0,0,0);
+        }
+        if (this.cuttingPlane) {
+            this.cuttingPlane.visible = true;
+            this.cuttingPlane.position.set(0, 0, 0);
+        }
+        this.currentY = 0;
+    }
+
+    onWindowResize() {
+        if (!this.camera || !this.renderer) return;
+        this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        if (this.controls) this.controls.update();
+        
+        if (this.onAnimate) this.onAnimate();
+
+        if (this.isSliced) {
+            const separationSpeed = 0.05;
+            const maxSeparation = 1.5;
+
+            if (this.pieceA) {
+                this.pieceA.position.y = THREE.MathUtils.lerp(this.pieceA.position.y, maxSeparation, separationSpeed);
+                if (this.cutSurfaceUpper) this.cutSurfaceUpper.position.y = this.currentY + this.pieceA.position.y;
+            }
+            if (this.pieceB) {
+                this.pieceB.position.y = THREE.MathUtils.lerp(this.pieceB.position.y, -maxSeparation, separationSpeed);
+                if (this.cutSurfaceLower) this.cutSurfaceLower.position.y = this.currentY + this.pieceB.position.y;
+            }
+        } else {
+            // Ensure cutting plane matches currentY exactly (controlled by hand smoothing elsewhere)
+            if (this.cuttingPlane) this.cuttingPlane.position.y = this.currentY;
+        }
+
+        if (this.renderer && this.scene && this.camera) {
+            this.renderer.render(this.scene, this.camera);
+        }
+    }
+}
+
