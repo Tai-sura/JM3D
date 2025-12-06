@@ -26,6 +26,7 @@ export class HandTracker {
         this.lastGesture = 'none';
         this.gestureStableCount = 0;
         this.smoothedY = new LerpValue(0, 0.15);
+        this.smoothedX = new LerpValue(0, 0.15); // Add X smoothing
         this.createDebugOverlay();
     }
 
@@ -197,15 +198,34 @@ export class HandTracker {
 
             const p1 = hand[1]; // Thumb Base
             const p17 = hand[17]; // Pinky Base
-            const dx = p17.x - p1.x;
-            const dy = p17.y - p1.y;
+            const p5 = hand[5]; // Index Base (for better roll calculation)
+            
+            // Use Index Base (P5) to Pinky Base (P17) for Roll calculation
+            // This is more stable than P1-P17 and represents the hand width plane better
+            const dx = p17.x - p5.x;
+            const dy = p17.y - p5.y;
             
             // Calculate base angle
             roll = Math.atan2(dy, dx);
             
+            // 深度檢測 (Foreshortening Protection)
+            // 如果手掌指像鏡頭 (P0 Wrist 到 P9 Middle MCP 距離很短)，則旋轉計算不可靠
+            // 這種情況下鎖定上一次的角度
+            const p0 = hand[0];
+            const p9 = hand[9];
+            const palmLength = Math.hypot(p9.x - p0.x, p9.y - p0.y);
+            
+            // Normal palm length is around 0.15 - 0.3 depending on distance
+            // If < 0.1, it's likely pointing at camera or fist
+            if (palmLength < 0.1) {
+                roll = this.lastRoll || 0; // Keep last known good roll
+            } else {
+                this.lastRoll = roll;
+            }
+
             // 修正邏輯：
-            // 平放 (Flat Hand) -> dx > 0, dy ~ 0 -> 0度 -> 水平切面
-            // 手刀 (Knife Hand) -> dx ~ 0, dy > 0 -> 90度 -> 垂直切面
+            // 平放 (Flat Hand) -> P5, P17 水平 -> dy ~ 0 -> 0度 -> 水平切面
+            // 手刀 (Knife Hand) -> P5, P17 垂直 -> dx ~ 0 -> 90度 -> 垂直切面
             
             // Update Debug Info with Roll angle
             const rollDeg = (roll * 180 / Math.PI).toFixed(0);
@@ -230,20 +250,34 @@ export class HandTracker {
                 const p0 = hand[0];
                 const p9 = hand[9];
                 const cy = (p0.y + p9.y) / 2;
+                const cx = (p0.x + p9.x) / 2;
+                
                 const rawTargetY = (0.5 - cy) * 8;
                 const clampedTargetY = Math.max(-2, Math.min(2, rawTargetY));
                 this.smoothedY.update(clampedTargetY);
+                
+                // Calculate target X
+                // MediaPipe X: 0 (left) -> 1 (right)
+                // Scene X: - (left) -> + (right)
+                // Since user is mirrored, moving hand right (for user) -> x decreases (in image) -> need positive scene X shift?
+                // Let's try standard: (0.5 - x).
+                // If x is small (left in image/right for user), 0.5 - 0.2 = 0.3 (Right).
+                const rawTargetX = (0.5 - cx) * 8;
+                const clampedTargetX = Math.max(-3, Math.min(3, rawTargetX));
+                this.smoothedX.update(clampedTargetX);
             }
         } else {
             gesture = 'none';
         }
 
         const currentY = this.smoothedY.step();
+        const currentX = this.smoothedX.step();
         
         if (this.onUpdate) {
             this.onUpdate({
                 gesture: gesture,
                 y: currentY,
+                x: currentX,
                 roll: roll, 
                 hasHand: !!(results.landmarks && results.landmarks.length > 0)
             });
