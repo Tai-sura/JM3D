@@ -47,14 +47,19 @@ export class HandTracker {
         }
     }
 
-    updateDebugInfo(msg) {
+    updateDebugInfo(msg, data = null) {
         if (this.debugEl) {
             this.debugEl.style.display = 'block';
             const v = this.video;
+            let extra = '';
+            if (data) {
+                extra = `<br>Gesture: ${data.gesture}<br>Roll: ${data.roll}°`;
+            }
             const info = `
                 Status: ${msg}<br>
                 Src: ${v.videoWidth}x${v.videoHeight}<br>
                 State: ${v.readyState}
+                ${extra}
             `;
             this.debugEl.innerHTML = info;
         }
@@ -198,10 +203,14 @@ export class HandTracker {
             // Calculate base angle
             roll = Math.atan2(dy, dx);
             
-            // No offset needed:
-            // Horizontal hand -> dy ~ 0 -> 0 deg
-            // Knife hand (Thumb Up) -> dy > 0 -> 90 deg
+            // 修正邏輯：
+            // 平放 (Flat Hand) -> dx > 0, dy ~ 0 -> 0度 -> 水平切面
+            // 手刀 (Knife Hand) -> dx ~ 0, dy > 0 -> 90度 -> 垂直切面
             
+            // Update Debug Info with Roll angle
+            const rollDeg = (roll * 180 / Math.PI).toFixed(0);
+            this.updateDebugInfo('Tracking', { roll: rollDeg, gesture: rawGesture });
+
             if (rawGesture === this.lastGesture) {
                 this.gestureStableCount++;
             } else {
