@@ -27,7 +27,7 @@ export class HandTracker {
         this.gestureStableCount = 0;
         this.smoothedY = new LerpValue(0, 0.15);
         
-        // Keep debug overlay for now
+        // Create Debug Overlay
         this.createDebugOverlay();
     }
 
@@ -38,10 +38,11 @@ export class HandTracker {
         this.debugEl.style.left = '0';
         this.debugEl.style.background = 'rgba(0, 0, 0, 0.7)';
         this.debugEl.style.color = '#0f0';
-        this.debugEl.style.fontSize = '10px';
+        this.debugEl.style.fontSize = '12px';
+        this.debugEl.style.fontFamily = 'monospace';
         this.debugEl.style.padding = '4px';
         this.debugEl.style.pointerEvents = 'none';
-        this.debugEl.style.zIndex = '2000'; // High z-index
+        this.debugEl.style.zIndex = '10005'; // Super high
         this.debugEl.style.display = 'none';
         
         if (this.video.parentElement) {
@@ -54,11 +55,13 @@ export class HandTracker {
             this.debugEl.style.display = 'block';
             const v = this.video;
             const info = `
+                [DEBUG]<br>
                 Status: ${msg}<br>
-                Src: ${v.videoWidth}x${v.videoHeight}<br>
-                Client: ${v.clientWidth}x${v.clientHeight}<br>
+                Source: ${v.videoWidth}x${v.videoHeight}<br>
+                Render: ${v.clientWidth}x${v.clientHeight}<br>
                 State: ${v.readyState}<br>
-                Paused: ${v.paused}
+                Paused: ${v.paused}<br>
+                Muted: ${v.muted}
             `;
             this.debugEl.innerHTML = info;
         }
@@ -122,13 +125,19 @@ export class HandTracker {
             this.video.playsInline = true;
             this.video.autoplay = true;
             this.video.muted = true;
+            
+            // Force layout recalc
+            this.video.style.display = 'none';
+            this.video.offsetHeight; // trigger reflow
+            this.video.style.display = 'block';
 
             // Wait for metadata
             await new Promise((resolve) => {
-                this.video.onloadedmetadata = () => {
-                    resolve();
-                };
-                setTimeout(resolve, 1000);
+                if (this.video.readyState >= 1) resolve();
+                else {
+                    this.video.onloadedmetadata = () => resolve();
+                    setTimeout(resolve, 1000);
+                }
             });
 
             try {
@@ -148,12 +157,10 @@ export class HandTracker {
                 btn.style.background = '#ef4444';
             }
 
-            // Debug loop
             this.debugTimer = setInterval(() => {
                 if (this.isRunning) this.updateDebugInfo('Running');
             }, 1000);
 
-            // Init AI
             if (!this.handLandmarker) {
                 this.initLandmarker();
             }
