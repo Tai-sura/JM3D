@@ -26,49 +26,45 @@ export class HandTracker {
         this.lastGesture = 'none';
         this.gestureStableCount = 0;
         this.smoothedY = new LerpValue(0, 0.15);
-        
-        // DEBUG: Create overlay
         this.createDebugOverlay();
     }
 
     createDebugOverlay() {
         this.debugEl = document.createElement('div');
-        Object.assign(this.debugEl.style, {
-            position: 'fixed', top: '10px', left: '10px',
-            background: 'rgba(0,0,0,0.8)', color: '#0f0',
-            fontSize: '12px', fontFamily: 'monospace',
-            padding: '8px', zIndex: '99999', pointerEvents: 'none'
-        });
-        document.body.appendChild(this.debugEl);
+        this.debugEl.style.position = 'absolute';
+        this.debugEl.style.top = '0';
+        this.debugEl.style.left = '0';
+        this.debugEl.style.background = 'rgba(0, 0, 0, 0.7)';
+        this.debugEl.style.color = '#0f0';
+        this.debugEl.style.fontSize = '10px';
+        this.debugEl.style.padding = '4px';
+        this.debugEl.style.pointerEvents = 'none';
+        this.debugEl.style.zIndex = '2000'; 
+        this.debugEl.style.display = 'none';
+        
+        // Try to attach to parent, fallback to body if parent is null (shouldn't happen in prod)
+        if (this.video.parentElement) {
+            this.video.parentElement.appendChild(this.debugEl);
+        } else {
+            document.body.appendChild(this.debugEl);
+        }
     }
 
     updateDebugInfo(msg) {
         if (this.debugEl) {
+            this.debugEl.style.display = 'block';
             const v = this.video;
-            let trackInfo = 'No Stream';
-            if (v.srcObject && v.srcObject.getVideoTracks().length > 0) {
-                const track = v.srcObject.getVideoTracks()[0];
-                trackInfo = `Track: ${track.label} | Enabled: ${track.enabled} | Muted: ${track.muted} | State: ${track.readyState}`;
-            }
-
             const info = `
-                [DEBUG MODE]<br>
                 Status: ${msg}<br>
-                Video: ${v.videoWidth}x${v.videoHeight}<br>
-                ReadyState: ${v.readyState}<br>
-                Stream: ${trackInfo}<br>
-                Error: ${v.error ? v.error.code + '-' + v.error.message : 'None'}
+                Src: ${v.videoWidth}x${v.videoHeight}<br>
+                State: ${v.readyState}<br>
+                Paused: ${v.paused}
             `;
             this.debugEl.innerHTML = info;
         }
     }
 
     async initLandmarker() {
-        // Skip AI for now to isolate camera issue
-        // this.updateDebugInfo('Skipping AI for camera test');
-        // return true; 
-        
-        // Actually, let's load it but not run detect loop immediately
         try {
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
             this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
@@ -80,103 +76,154 @@ export class HandTracker {
                 numHands: 1
             });
             return true;
-        } catch (e) {
-            console.error(e);
+        } catch (error) {
+            console.error('MediaPipe Init Error:', error);
             return false;
         }
     }
 
     async start() {
         if (this.isRunning) {
-            // Reload page to stop cleanly
-            window.location.reload(); 
+            this.stop();
+            const btn = document.getElementById('start-camera-btn');
+            if (btn) {
+                btn.textContent = '開啟鏡頭';
+                btn.style.background = '#22c55e';
+            }
+            this.hideError();
+            if (this.debugEl) this.debugEl.style.display = 'none';
             return;
         }
 
-        const btn = document.getElementById('start-camera-btn');
-        if (btn) btn.style.display = 'none'; // Hide button to prevent double click
-
         if (window.location.protocol === 'file:') {
-            alert('Local file access blocked.'); return;
+            this.showError('Local file access blocked.');
+            return;
         }
         
         try {
-            this.updateDebugInfo('Getting UserMedia...');
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { width: 1280, height: 720 } 
-            });
+            // Standard Init
+            const constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             
-            // NUCLEAR OPTION: Re-create video element in root body
-            // This bypasses ANY CSS issues in the original container
-            const oldVideo = this.video;
-            const newVideo = document.createElement('video');
-            newVideo.autoplay = true;
-            newVideo.playsInline = true;
-            newVideo.muted = true;
-            Object.assign(newVideo.style, {
-                position: 'fixed', bottom: '20px', left: '20px',
-                width: '320px', height: '240px',
-                border: '4px solid red', zIndex: '99999',
-                background: 'black', objectFit: 'cover'
-            });
-            document.body.appendChild(newVideo);
-            this.video = newVideo; // Swap reference
-            oldVideo.style.display = 'none'; // Hide old one
-
             this.video.srcObject = stream;
+            this.video.playsInline = true;
+            this.video.autoplay = true;
+            this.video.muted = true;
             
-            this.updateDebugInfo('Waiting for play...');
+            // Force display block to ensure no hidden state
+            this.video.style.display = 'block';
+
+            await new Promise((resolve) => {
+                if (this.video.readyState >= 1) resolve();
+                else {
+                    this.video.onloadedmetadata = () => resolve();
+                    setTimeout(resolve, 1000);
+                }
+            });
+
             await this.video.play();
-            this.updateDebugInfo('Playing!');
-
             this.isRunning = true;
+            this.hideError();
             
-            // Update debug loop
-            setInterval(() => {
-                this.updateDebugInfo('Running');
-            }, 500);
-
-            // Init AI in background
-            if (!this.handLandmarker) {
-                this.initLandmarker().then(() => {
-                    console.log('AI Loaded');
-                    this.loop(); // Start detecting only after AI loads
-                });
+            const btn = document.getElementById('start-camera-btn');
+            if (btn) {
+                btn.textContent = '關閉鏡頭';
+                btn.style.background = '#ef4444';
             }
 
+            this.debugTimer = setInterval(() => {
+                if (this.isRunning) this.updateDebugInfo('Running');
+            }, 1000);
+
+            if (!this.handLandmarker) {
+                this.initLandmarker();
+            }
+            
+            this.loop();
+
         } catch (err) {
-            console.error(err);
-            this.updateDebugInfo('Error: ' + err.message);
-            alert('Camera Error: ' + err.message);
+            console.error("Camera Error:", err);
+            this.showError('Error: ' + err.message);
+            this.isRunning = false;
+        }
+    }
+
+    showError(msg) {
+        const errEl = document.getElementById('camera-error');
+        const msgEl = document.getElementById('camera-error-msg');
+        if (errEl && msgEl) {
+            errEl.style.display = 'flex';
+            msgEl.innerHTML = msg;
+        }
+    }
+
+    hideError() {
+        const errEl = document.getElementById('camera-error');
+        if (errEl) errEl.style.display = 'none';
+        const btn = document.getElementById('start-camera-btn');
+        if (btn) btn.style.display = 'block';
+    }
+
+    stop() {
+        this.isRunning = false;
+        if (this.debugTimer) clearInterval(this.debugTimer);
+        if (this.video.srcObject) {
+            this.video.srcObject.getTracks().forEach(track => track.stop());
+            this.video.srcObject = null;
         }
     }
 
     async loop() {
-        if (!this.isRunning || !this.handLandmarker) return;
+        if (!this.isRunning) return;
 
-        if (this.video.readyState >= 2 && this.video.videoWidth > 0) {
+        if (this.handLandmarker && this.video.readyState >= 2 && this.video.videoWidth > 0) {
             try {
                 const results = await this.handLandmarker.detectForVideo(this.video, performance.now());
                 this.processResults(results);
             } catch (e) {
-                console.error(e);
+                console.error('Detection error:', e);
             }
         }
+
         requestAnimationFrame(() => this.loop());
     }
 
     processResults(results) {
         let gesture = 'none';
+        let roll = 0; // Rotation angle in radians
+
         if (results.landmarks && results.landmarks.length > 0) {
             const hand = results.landmarks[0];
             const rawGesture = this.detectGesture(hand);
-            if (rawGesture === this.lastGesture) this.gestureStableCount++;
-            else {
+
+            // Calculate Roll (Rotation) using Thumb Base (1) and Pinky Base (17)
+            // This vector is roughly horizontal when hand is flat
+            const p1 = hand[1];
+            const p17 = hand[17];
+            // Note: Y in Mediapipe is top-down (0 at top, 1 at bottom)
+            // So deltaY > 0 means p17 is lower than p1
+            const dx = p17.x - p1.x;
+            const dy = p17.y - p1.y;
+            
+            // Calculate angle. 
+            // We want 0 when hand is flat. 
+            // When hand is flat, p1 (Thumb) is usually left of p17 (Right hand, palm facing camera)
+            // Wait, for right hand palm facing camera: Thumb is Left, Pinky is Right.
+            // So dx should be positive. dy should be near 0.
+            // atan2(dy, dx) gives angle relative to X axis.
+            roll = Math.atan2(dy, dx);
+
+            if (rawGesture === this.lastGesture) {
+                this.gestureStableCount++;
+            } else {
                 this.gestureStableCount = 0;
                 this.lastGesture = rawGesture;
             }
-            if (this.gestureStableCount > 3) gesture = rawGesture;
-            
+
+            if (this.gestureStableCount > 3) {
+                gesture = rawGesture;
+            }
+
             if (gesture === 'open') {
                 const p0 = hand[0];
                 const p9 = hand[9];
@@ -185,12 +232,17 @@ export class HandTracker {
                 const clampedTargetY = Math.max(-2, Math.min(2, rawTargetY));
                 this.smoothedY.update(clampedTargetY);
             }
+        } else {
+            gesture = 'none';
         }
+
         const currentY = this.smoothedY.step();
+        
         if (this.onUpdate) {
             this.onUpdate({
                 gesture: gesture,
                 y: currentY,
+                roll: roll, // Pass rotation
                 hasHand: !!(results.landmarks && results.landmarks.length > 0)
             });
         }
@@ -199,15 +251,21 @@ export class HandTracker {
     detectGesture(hand) {
         const wrist = hand[0];
         let curledFingers = 0;
-        const fingerIndices = [{ tip: 8, pip: 6 }, { tip: 12, pip: 10 }, { tip: 16, pip: 14 }, { tip: 20, pip: 18 }];
+        const fingerIndices = [
+            { tip: 8, pip: 6 }, { tip: 12, pip: 10 }, 
+            { tip: 16, pip: 14 }, { tip: 20, pip: 18 }
+        ];
+
         fingerIndices.forEach(({tip, pip}) => {
             const tipDist = Math.hypot(hand[tip].x - wrist.x, hand[tip].y - wrist.y, hand[tip].z - wrist.z);
             const pipDist = Math.hypot(hand[pip].x - wrist.x, hand[pip].y - wrist.y, hand[pip].z - wrist.z);
             if (tipDist < pipDist * 1.1) curledFingers++;
         });
+
         const thumbTip = hand[4];
         const pinkyBase = hand[17];
         if (Math.hypot(thumbTip.x - pinkyBase.x, thumbTip.y - pinkyBase.y) < 0.15) curledFingers++;
+
         if (curledFingers >= 4) return 'fist';
         if (curledFingers <= 1) return 'open';
         return 'none';

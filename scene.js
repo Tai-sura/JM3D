@@ -23,6 +23,7 @@ export class SceneManager {
         
         this.isSliced = false;
         this.currentY = 0;
+        this.currentRoll = 0; // Added for smoothing
         this.onAnimate = null;
     }
 
@@ -41,17 +42,15 @@ export class SceneManager {
         this.renderer.localClippingEnabled = true;
         this.container.appendChild(this.renderer.domElement);
 
-        // OrbitControls
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
         this.controls.minDistance = 5;
         this.controls.maxDistance = 15;
 
-        // TransformControls
         this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
         this.transformControls.addEventListener('dragging-changed', (event) => {
-            this.controls.enabled = !event.value; // Disable OrbitControls while dragging gizmo
+            this.controls.enabled = !event.value; 
         });
         this.scene.add(this.transformControls);
 
@@ -87,15 +86,18 @@ export class SceneManager {
             if (this.transformControls) this.transformControls.detach();
         }
         const group = new THREE.Group();
+        // Plane
         const geometry = new THREE.PlaneGeometry(7, 7);
         const material = new THREE.MeshStandardMaterial({
             color: 0x60a5fa, transparent: true, opacity: 0.4, side: THREE.DoubleSide,
             emissive: 0x60a5fa, emissiveIntensity: 0.2
         });
+        // IMPORTANT: Rotate the mesh, not the group initially, so local Z axis is Up
         const mesh = new THREE.Mesh(geometry, material);
         mesh.rotation.x = -Math.PI / 2; 
         group.add(mesh);
         
+        // Edges
         const edges = new THREE.EdgesGeometry(geometry);
         const lineMaterial = new THREE.LineBasicMaterial({ color: 0x60a5fa, linewidth: 3 });
         const line = new THREE.LineSegments(edges, lineMaterial);
@@ -105,7 +107,6 @@ export class SceneManager {
         this.scene.add(group);
         this.cuttingPlane = group;
         
-        // Attach TransformControls
         if (this.transformControls) {
             this.transformControls.attach(this.cuttingPlane);
             this.transformControls.setMode('translate');
@@ -165,14 +166,27 @@ export class SceneManager {
         }
     }
 
+    updateCutRotation(roll) {
+        if (this.isSliced || !this.cuttingPlane) return;
+        
+        // Smooth interpolation for rotation
+        const smoothFactor = 0.1; 
+        this.currentRoll = THREE.MathUtils.lerp(this.currentRoll, roll, smoothFactor);
+        
+        // Apply rotation to the Z axis of the group
+        // Since the plane is horizontal, rotating around Z (world) or Y (local?)
+        // Our plane group is at (0,y,0). 
+        // Rolling the hand means rotating around the depth axis (Z) from the camera's perspective.
+        this.cuttingPlane.rotation.z = this.currentRoll;
+        // Also clamp X rotation if needed, but for now just Z (Roll) is enough for 2D tilting
+    }
+
     performCut() {
         if (this.isSliced) return;
         this.isSliced = true;
         
         if (this.objectMesh) this.objectMesh.visible = false;
-        // if (this.cuttingPlane) this.cuttingPlane.visible = false;
 
-        // Use current plane position and normal (from rotation)
         const position = this.cuttingPlane.position.clone();
         const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cuttingPlane.quaternion).normalize();
 
@@ -200,8 +214,6 @@ export class SceneManager {
         this.pieceB = new THREE.Mesh(geometry.clone(), materialB);
         this.scene.add(this.pieceB);
 
-        // For rotated planes, simple 2D calculation is invalid.
-        // Check if plane is horizontal (normal approx 0,1,0)
         const isHorizontal = Math.abs(normal.dot(new THREE.Vector3(0, 1, 0))) > 0.99;
 
         if (isHorizontal) {
@@ -241,6 +253,7 @@ export class SceneManager {
 
     reset() {
         this.isSliced = false;
+        this.currentRoll = 0;
         
         if (this.pieceA) { this.scene.remove(this.pieceA); this.pieceA = null; }
         if (this.pieceB) { this.scene.remove(this.pieceB); this.pieceB = null; }
@@ -255,6 +268,7 @@ export class SceneManager {
             this.cuttingPlane.visible = true;
             this.cuttingPlane.position.set(0, 0, 0);
             this.cuttingPlane.quaternion.set(0,0,0,1);
+            this.cuttingPlane.rotation.z = 0;
         }
         this.currentY = 0;
         if (this.transformControls) {
@@ -281,7 +295,6 @@ export class SceneManager {
             const separationSpeed = 0.05;
             const maxSeparation = 1.5;
 
-            // Hide gizmo when sliced
             if (this.transformControls) this.transformControls.visible = false;
 
             if (this.pieceA) {
@@ -294,7 +307,6 @@ export class SceneManager {
             }
         } else {
             if (this.cuttingPlane) {
-                // If TransformControls is active, currentY updates from plane
                 this.currentY = this.cuttingPlane.position.y;
             }
         }

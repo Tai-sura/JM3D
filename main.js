@@ -4,24 +4,15 @@ import { HandTracker } from './hand-tracking.js';
 import { UIManager } from './ui.js';
 import { SHAPES } from './shapes.js';
 
-// Global Error Handler for GitHub Pages debugging
 window.onerror = function(msg, url, lineNo, columnNo, error) {
     const string = msg.toLowerCase();
     const substring = "script error";
     if (string.indexOf(substring) > -1){
         console.error('Script Error: See Browser Console for Detail');
     } else {
-        const message = [
-            'Message: ' + msg,
-            'URL: ' + url,
-            'Line: ' + lineNo,
-            'Column: ' + columnNo,
-            'Error object: ' + JSON.stringify(error)
-        ].join(' - ');
-        console.error(message);
-        // Only alert if it's a critical init error
+        // Only alert critical errors
         if (msg.includes('import') || msg.includes('Tracker') || msg.includes('Scene')) {
-            alert('系統錯誤: ' + msg + '\n請嘗試刷新頁面或檢查網絡。');
+            // console.error(msg); 
         }
     }
     return false;
@@ -36,33 +27,26 @@ async function main() {
         ui = new UIManager();
         scene = new SceneManager('canvas-container');
         
-        // Ensure DOM elements exist before initializing tracker
         const cameraEl = document.getElementById('camera');
         if (!cameraEl) throw new Error('Camera element not found');
         
         tracker = new HandTracker(cameraEl, onHandUpdate);
 
-        // Setup Button Listener
         const startBtn = document.getElementById('start-camera-btn');
         if (startBtn) {
             startBtn.style.display = 'block';
-            // Remove any existing listeners by cloning or just adding new one (assuming single init)
-            startBtn.onclick = () => { // Use onclick to override previous bindings
+            startBtn.onclick = () => { 
                 console.log('📸 Camera start button clicked');
                 tracker.start().catch(err => {
                     console.error('Start failed:', err);
                     alert('無法啟動鏡頭: ' + err.message);
                 });
             };
-        } else {
-            console.warn('Start camera button not found');
         }
 
-        // Initialize Scene
         scene.init();
         ui.updateTeachingContent(SHAPES['cylinder']);
         
-        // Expose Globals
         window.selectShape = (type) => {
             scene.loadShape(type);
             ui.setActiveShapeCard(type);
@@ -90,26 +74,21 @@ async function main() {
             alert(`📖 使用說明\n\n1. 選擇左側圖形\n2. 操作模式：\n   - 滑鼠拖曳背景：旋轉視角\n   - 滑鼠控制平面：使用紅綠藍軸移動或旋轉切割面\n   - 手勢控制：張手移動、握拳切割\n3. 觀察物體上下分離與截面形狀`);
         };
 
-        // Done
         ui.setLoading(false);
 
-        // Scene Animation Loop Hook
         scene.onAnimate = () => {
             if (!scene.isSliced && scene.cuttingPlane && scene.objectMesh) {
                 const planeObj = scene.cuttingPlane;
                 const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(planeObj.quaternion).normalize();
                 
-                // Calculate angle for UI
                 const angle = Math.acos(Math.abs(normal.dot(new THREE.Vector3(0, 1, 0))));
                 const angleDeg = Math.round(THREE.MathUtils.radToDeg(angle));
                 const angleEl = document.getElementById('cut-angle');
                 if (angleEl) angleEl.textContent = `${angleDeg}°`;
 
-                // Mathematical Plane for intersection
                 const constant = -normal.dot(planeObj.position);
                 const mathPlane = new THREE.Plane(normal, constant);
 
-                // Calculate Generic Intersection
                 const polygon = calculateMeshPlaneIntersection(scene.objectMesh, mathPlane);
                 
                 let data = null;
@@ -121,7 +100,7 @@ async function main() {
                     const scale = 40; 
                     const canvasPoints = polygon.map(p => ({
                         x: 166 + p.x * scale,
-                        y: 140 - p.y * scale // Flip Y for canvas
+                        y: 140 - p.y * scale 
                     }));
 
                     data = {
@@ -161,9 +140,16 @@ function onHandUpdate(data) {
     }
 
     if (data.gesture === 'open') {
-        ui.updateHandStatus(true, '✋ 正在控制高度');
+        ui.updateHandStatus(true, '✋ 控制: 移動 & 旋轉');
         ui.updateGestureUI('open');
+        
+        // Update both Height and Rotation
         scene.updateCutHeight(data.y);
+        if (typeof data.roll === 'number') {
+            // We multiply by -1 to make the rotation intuitive (tilting hand left rotates plane left)
+            scene.updateCutRotation(-data.roll);
+        }
+        
         ui.updateCutInfo(data.y);
     } else if (data.gesture === 'fist') {
         ui.updateHandStatus(true, '✊ 握拳切割');
@@ -221,7 +207,6 @@ function calculateMeshPlaneIntersection(mesh, plane) {
 
     if (intersections.length < 3) return null;
 
-    // Filter unique points
     const unique = [];
     for (let p of intersections) {
         let isDup = false;
@@ -233,7 +218,6 @@ function calculateMeshPlaneIntersection(mesh, plane) {
 
     if (unique.length < 3) return null;
 
-    // Project to 2D Plane Coordinate System
     const n = plane.normal;
     const basisX = new THREE.Vector3();
     if (Math.abs(n.y) > 0.9) basisX.set(1, 0, 0); else basisX.set(0, 1, 0);
@@ -302,7 +286,6 @@ function getShapeName(baseType, angle) {
     return '多邊形';
 }
 
-// Start when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', main);
 } else {
