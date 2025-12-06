@@ -242,10 +242,14 @@ export class SceneManager {
 
             const planeGeom = new THREE.PlaneGeometry(100, 100);
             const matPlane = new THREE.MeshStandardMaterial({
-                color: color, side: THREE.DoubleSide, 
+                color: 0xFFFF00, 
+                emissive: 0x333300,
+                side: THREE.DoubleSide, 
                 metalness: 0.1, roughness: 0.1,
-                clippingPlanes: [plane],
                 stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, stencilRef: 0,
+                polygonOffset: true,
+                polygonOffsetFactor: -1,
+                polygonOffsetUnits: -1
             });
             const capMesh = new THREE.Mesh(planeGeom, matPlane);
             capMesh.renderOrder = renderOrderBase + 2;
