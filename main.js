@@ -144,7 +144,9 @@ function onHandUpdate(data) {
         ui.updateGestureUI('open');
         
         // Update both Height and Rotation
-        scene.updateCutHeight(data.y);
+        // Pass both X and Y to scene
+        scene.updateCutPosition(data.x || 0, data.y);
+        
         if (typeof data.roll === 'number') {
             // Apply Deadzone: if roll is small (< 5 deg ~ 0.08 rad), treat as 0
             let roll = data.roll;

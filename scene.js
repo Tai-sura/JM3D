@@ -158,11 +158,12 @@ export class SceneManager {
         this.scene.add(this.objectMesh);
     }
 
-    updateCutHeight(y) {
+    updateCutPosition(x, y) {
         if (this.isSliced) return;
         this.currentY = y;
         if (this.cuttingPlane) {
             this.cuttingPlane.position.y = y;
+            this.cuttingPlane.position.x = x;
         }
     }
 
@@ -250,6 +251,7 @@ export class SceneManager {
     reset() {
         this.isSliced = false;
         this.currentRoll = 0;
+        this.currentY = 0;
         
         if (this.pieceA) { this.scene.remove(this.pieceA); this.pieceA = null; }
         if (this.pieceB) { this.scene.remove(this.pieceB); this.pieceB = null; }
@@ -266,7 +268,6 @@ export class SceneManager {
             this.cuttingPlane.quaternion.set(0,0,0,1);
             this.cuttingPlane.rotation.z = 0;
         }
-        this.currentY = 0;
         if (this.transformControls) {
             this.transformControls.attach(this.cuttingPlane);
             this.transformControls.visible = true;
