@@ -70,6 +70,17 @@ async function main() {
             if (btnRotate) btnRotate.style.background = mode === 'rotate' ? 'rgba(96, 165, 250, 0.3)' : 'transparent';
         };
 
+        window.manualCut = () => {
+            if (!scene || !ui) return;
+            if (!scene.isSliced) {
+                ui.updateHandStatus(true, '✊ 握拳切割');
+                ui.updateGestureUI('fist');
+                scene.performCut();
+                ui.showCutComplete();
+                if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+            }
+        };
+
         window.showHelp = () => {
             alert(`📖 使用說明\n\n1. 選擇左側圖形\n2. 操作模式：\n   - 滑鼠拖曳背景：旋轉視角\n   - 滑鼠控制平面：使用紅綠藍軸移動或旋轉切割面\n   - 手勢控制：張手移動、握拳切割\n3. 觀察物體上下分離與截面形狀`);
         };
