@@ -171,8 +171,8 @@ export class SceneManager {
         if (this.isSliced || !this.cuttingPlane) return;
         
         // Increase smoothing (lower factor = more smoothing/lag)
-        // Was 0.05, increased to 0.2 for better sensitivity
-        const smoothFactor = 0.2; 
+        // Increased to 0.4 for high sensitivity as requested
+        const smoothFactor = 0.4; 
         this.currentRoll = THREE.MathUtils.lerp(this.currentRoll, roll, smoothFactor);
         
         this.cuttingPlane.rotation.z = this.currentRoll;
@@ -224,10 +224,6 @@ export class SceneManager {
             
             const capGeometry = new THREE.ShapeGeometry(shape2D);
             
-            // ShapeGeometry is created on XY plane.
-            // Our 2D points are in the Local Plane Basis (X, Z of the group).
-            // We need to align this geometry to the cutting plane.
-            
             const capMaterial = new THREE.MeshStandardMaterial({
                 color: 0xfbbf24, side: THREE.DoubleSide, emissive: 0xfbbf24, emissiveIntensity: 0.4
             });
@@ -237,38 +233,17 @@ export class SceneManager {
             this.cutSurfaceLower = new THREE.Mesh(capGeometry.clone(), capMaterial);
 
             // Align caps to the cutting plane
-            // 1. Move to plane position
             this.cutSurfaceUpper.position.copy(position);
             this.cutSurfaceLower.position.copy(position);
             
-            // 2. Rotate to match plane orientation
             this.cutSurfaceUpper.quaternion.copy(this.cuttingPlane.quaternion);
             this.cutSurfaceLower.quaternion.copy(this.cuttingPlane.quaternion);
 
-            // 3. Rotate -90 around X to map XY geometry to XZ plane (which is the visual plane's basis)
+            // Rotate -90 around X to map XY geometry to XZ plane (matches visual plane basis)
+            // Since basisY in calculation is now -Z, this rotation correctly maps 
+            // the +Y geometry coord (which came from -Z basis) to -Z local space.
             this.cutSurfaceUpper.rotateX(-Math.PI / 2);
             this.cutSurfaceLower.rotateX(-Math.PI / 2);
-            
-            // 4. Offset slightly along normal to prevent z-fighting
-            // Normal is local Y (0,1,0) after rotation? 
-            // No, normal in world space is 'normal'.
-            // In local space of the rotated mesh, the normal is Y.
-            
-            // We can just translate along the World Normal.
-            this.cutSurfaceUpper.translateOnAxis(new THREE.Vector3(0, 0, 1), 0.01); // Local Z is World Y (Normal) after rotateX(-90)?
-            // Wait, rotateX(-90): Y -> Z, Z -> -Y. 
-            // Original Normal is Z (0,0,1) for ShapeGeometry? 
-            // ShapeGeometry is in XY plane, normal is Z (0,0,1).
-            // After rotateX(-90), normal becomes Y (0,1,0).
-            // This matches the plane group's local Y, which is the cut normal.
-            // So translateZ(0.01) on the original geometry moves it along Y in local space?
-            
-            // Simplest: Just move in world space along 'normal'.
-            // Reset positions first to be safe, then apply offsets.
-            // Actually, since they are children of Scene, we operate in World Space.
-            // They have the quaternion of the cuttingPlane.
-            // The cuttingPlane's "up" is determined by its rotation.
-            // Let's try translating in World Space.
             
             this.cutSurfaceUpper.position.addScaledVector(normal, -0.01);
             this.cutSurfaceLower.position.addScaledVector(normal, 0.01);
@@ -296,13 +271,11 @@ export class SceneManager {
             const da = plane.distanceToPoint(va);
             const db = plane.distanceToPoint(vb);
             
-            // Check if point A is exactly on plane
             if (Math.abs(da) < 1e-5) {
                 intersections.push(va.clone());
                 return;
             }
     
-            // Check intersection
             if (da * db < 0) {
                 const t = da / (da - db);
                 const p = new THREE.Vector3().copy(va).lerp(vb, t);
@@ -342,19 +315,20 @@ export class SceneManager {
         let basisX, basisY, origin;
     
         if (planeObj) {
-            // Force update to ensure matrix is fresh
             planeObj.updateMatrixWorld(true);
             const mw = planeObj.matrixWorld;
             const te = mw.elements;
     
-            // Use planeObj's local system for accurate clipping
             origin = new THREE.Vector3().setFromMatrixPosition(mw);
             
-            // Extract basis vectors directly from matrix columns
-            // Column 0 (X) and Column 2 (Z) corresponds to the plane size 7x7 axes
-            // (Visual plane is rotated X -90 inside the group, effectively lying on Group XZ plane)
+            // Column 0 is X axis
             basisX = new THREE.Vector3(te[0], te[1], te[2]).normalize();
-            basisY = new THREE.Vector3(te[8], te[9], te[10]).normalize();
+            // Column 2 is Z axis
+            // IMPORTANT: Use -Z for basisY to match the coordinate system 
+            // when we map ShapeGeometry(XY) -> rotateX(-90) -> Local(X, -Z)
+            // We want +Y in Shape to map to -Z in Local.
+            // So we project world points onto -Z axis to get Y coordinate.
+            basisY = new THREE.Vector3(-te[8], -te[9], -te[10]).normalize();
         } else {
             // Fallback to robust arbitrary basis
             const n = plane.normal;
