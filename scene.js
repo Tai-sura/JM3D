@@ -110,7 +110,7 @@ export class SceneManager {
         if (this.transformControls) {
             this.transformControls.attach(this.cuttingPlane);
             this.transformControls.setMode('translate');
-            this.transformControls.showX = false; 
+            this.transformControls.showX = true; 
             this.transformControls.showZ = false;
         }
     }
@@ -125,7 +125,7 @@ export class SceneManager {
             this.transformControls.enabled = true;
             this.transformControls.setMode(mode);
             if (mode === 'translate') {
-                this.transformControls.showX = false;
+                this.transformControls.showX = true;
                 this.transformControls.showZ = false;
                 this.transformControls.showY = true;
             } else {
