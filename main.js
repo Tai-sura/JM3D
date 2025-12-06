@@ -150,9 +150,9 @@ function onHandUpdate(data) {
             let roll = data.roll;
             if (Math.abs(roll) < 0.08) roll = 0;
             
-            // Scale down the rotation for finer control (e.g. 0.5x)
-            // Multiply by -1 for intuitive direction
-            scene.updateCutRotation(-roll * 0.5);
+            // Direct mapping: 90 deg hand -> 90 deg cut
+            // Multiply by -1 to match rotation direction (CW hand -> CW cut)
+            scene.updateCutRotation(-roll);
         }
         
         ui.updateCutInfo(data.y);

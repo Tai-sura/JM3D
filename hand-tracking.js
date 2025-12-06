@@ -196,14 +196,12 @@ export class HandTracker {
             const dy = p17.y - p1.y;
             
             // Calculate base angle
-            let rawRoll = Math.atan2(dy, dx);
+            roll = Math.atan2(dy, dx);
             
-            // OFFSET Adjustment:
-            // "Knife hand" (Thumb Up) -> dy > 0, dx ~ 0 -> atan2 ~ 90 deg (PI/2)
-            // User wants this to be 0 deg (Horizontal).
-            // So we subtract 90 degrees.
-            roll = rawRoll - (Math.PI / 2);
-
+            // No offset needed:
+            // Horizontal hand -> dy ~ 0 -> 0 deg
+            // Knife hand (Thumb Up) -> dy > 0 -> 90 deg
+            
             if (rawGesture === this.lastGesture) {
                 this.gestureStableCount++;
             } else {
