@@ -42,11 +42,8 @@ export class HandTracker {
         this.debugEl.style.zIndex = '2000'; 
         this.debugEl.style.display = 'none';
         
-        // Try to attach to parent, fallback to body if parent is null (shouldn't happen in prod)
         if (this.video.parentElement) {
             this.video.parentElement.appendChild(this.debugEl);
-        } else {
-            document.body.appendChild(this.debugEl);
         }
     }
 
@@ -57,8 +54,7 @@ export class HandTracker {
             const info = `
                 Status: ${msg}<br>
                 Src: ${v.videoWidth}x${v.videoHeight}<br>
-                State: ${v.readyState}<br>
-                Paused: ${v.paused}
+                State: ${v.readyState}
             `;
             this.debugEl.innerHTML = info;
         }
@@ -88,7 +84,7 @@ export class HandTracker {
             const btn = document.getElementById('start-camera-btn');
             if (btn) {
                 btn.textContent = '開啟鏡頭';
-                btn.style.background = '#22c55e';
+                btn.style.background = 'rgba(34, 197, 94, 0.9)';
             }
             this.hideError();
             if (this.debugEl) this.debugEl.style.display = 'none';
@@ -109,8 +105,6 @@ export class HandTracker {
             this.video.playsInline = true;
             this.video.autoplay = true;
             this.video.muted = true;
-            
-            // Force display block to ensure no hidden state
             this.video.style.display = 'block';
 
             await new Promise((resolve) => {
@@ -190,28 +184,25 @@ export class HandTracker {
 
     processResults(results) {
         let gesture = 'none';
-        let roll = 0; // Rotation angle in radians
+        let roll = 0;
 
         if (results.landmarks && results.landmarks.length > 0) {
             const hand = results.landmarks[0];
             const rawGesture = this.detectGesture(hand);
 
-            // Calculate Roll (Rotation) using Thumb Base (1) and Pinky Base (17)
-            // This vector is roughly horizontal when hand is flat
-            const p1 = hand[1];
-            const p17 = hand[17];
-            // Note: Y in Mediapipe is top-down (0 at top, 1 at bottom)
-            // So deltaY > 0 means p17 is lower than p1
+            const p1 = hand[1]; // Thumb Base
+            const p17 = hand[17]; // Pinky Base
             const dx = p17.x - p1.x;
             const dy = p17.y - p1.y;
             
-            // Calculate angle. 
-            // We want 0 when hand is flat. 
-            // When hand is flat, p1 (Thumb) is usually left of p17 (Right hand, palm facing camera)
-            // Wait, for right hand palm facing camera: Thumb is Left, Pinky is Right.
-            // So dx should be positive. dy should be near 0.
-            // atan2(dy, dx) gives angle relative to X axis.
-            roll = Math.atan2(dy, dx);
+            // Calculate base angle
+            let rawRoll = Math.atan2(dy, dx);
+            
+            // OFFSET Adjustment:
+            // "Knife hand" (Thumb Up) -> dy > 0, dx ~ 0 -> atan2 ~ 90 deg (PI/2)
+            // User wants this to be 0 deg (Horizontal).
+            // So we subtract 90 degrees.
+            roll = rawRoll - (Math.PI / 2);
 
             if (rawGesture === this.lastGesture) {
                 this.gestureStableCount++;
@@ -242,7 +233,7 @@ export class HandTracker {
             this.onUpdate({
                 gesture: gesture,
                 y: currentY,
-                roll: roll, // Pass rotation
+                roll: roll, 
                 hasHand: !!(results.landmarks && results.landmarks.length > 0)
             });
         }
@@ -251,21 +242,15 @@ export class HandTracker {
     detectGesture(hand) {
         const wrist = hand[0];
         let curledFingers = 0;
-        const fingerIndices = [
-            { tip: 8, pip: 6 }, { tip: 12, pip: 10 }, 
-            { tip: 16, pip: 14 }, { tip: 20, pip: 18 }
-        ];
-
+        const fingerIndices = [{ tip: 8, pip: 6 }, { tip: 12, pip: 10 }, { tip: 16, pip: 14 }, { tip: 20, pip: 18 }];
         fingerIndices.forEach(({tip, pip}) => {
             const tipDist = Math.hypot(hand[tip].x - wrist.x, hand[tip].y - wrist.y, hand[tip].z - wrist.z);
             const pipDist = Math.hypot(hand[pip].x - wrist.x, hand[pip].y - wrist.y, hand[pip].z - wrist.z);
             if (tipDist < pipDist * 1.1) curledFingers++;
         });
-
         const thumbTip = hand[4];
         const pinkyBase = hand[17];
         if (Math.hypot(thumbTip.x - pinkyBase.x, thumbTip.y - pinkyBase.y) < 0.15) curledFingers++;
-
         if (curledFingers >= 4) return 'fist';
         if (curledFingers <= 1) return 'open';
         return 'none';
