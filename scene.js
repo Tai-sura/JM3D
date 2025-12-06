@@ -608,6 +608,10 @@ export class SceneManager {
         if (this.isSliced) {
             const separationSpeed = 0.05;
             const maxSeparation = 1.5;
+            
+            // Smoothly update separation value
+            if (this.separationValue === undefined) this.separationValue = 0;
+            this.separationValue = THREE.MathUtils.lerp(this.separationValue, maxSeparation, separationSpeed);
 
             if (this.transformControls) this.transformControls.visible = false;
             
@@ -616,19 +620,19 @@ export class SceneManager {
             const initialPos = this.cuttingPlane.position;
 
             if (this.pieceA) {
-                this.pieceA.position.y = THREE.MathUtils.lerp(this.pieceA.position.y, maxSeparation, separationSpeed);
+                // Move Piece A along the normal (Up/Normal direction)
+                this.pieceA.position.copy(normal).multiplyScalar(this.separationValue);
                 
                 // Update Clipping Plane Constant
                 const posA = initialPos.clone().add(this.pieceA.position);
                 const planeA = this.pieceA.material.clippingPlanes[0];
                 if (planeA) planeA.constant = -normal.dot(posA);
                 
-                // Update Stencil Meshes Position
+                // Update Stencil Meshes
                 if (this.stencilCapA) {
                     this.stencilCapA.group.position.copy(this.pieceA.position);
                     this.stencilCapA.group.quaternion.copy(this.pieceA.quaternion);
                     
-                    // Cap Plane must match the clipping plane exactly
                     const coplanarPoint = new THREE.Vector3().copy(normal).multiplyScalar(-planeA.constant);
                     this.stencilCapA.capMesh.position.copy(coplanarPoint);
                     this.stencilCapA.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
@@ -636,22 +640,22 @@ export class SceneManager {
             }
             
             if (this.pieceB) {
-                this.pieceB.position.y = THREE.MathUtils.lerp(this.pieceB.position.y, -maxSeparation, separationSpeed);
+                // Move Piece B along the negative normal (Down/Away direction)
+                this.pieceB.position.copy(normal).multiplyScalar(-this.separationValue);
                 
                 // Update Clipping Plane Constant
                 const posB = initialPos.clone().add(this.pieceB.position);
                 const planeB = this.pieceB.material.clippingPlanes[0];
                 if (planeB) planeB.constant = normal.dot(posB);
                 
-                // Update Stencil Meshes Position
+                // Update Stencil Meshes
                 if (this.stencilCapB) {
                     this.stencilCapB.group.position.copy(this.pieceB.position);
                     this.stencilCapB.group.quaternion.copy(this.pieceB.quaternion);
                     
                     const coplanarPointB = new THREE.Vector3().copy(planeB.normal).multiplyScalar(-planeB.constant);
                     this.stencilCapB.capMesh.position.copy(coplanarPointB);
-                    // For Plane B, normal is inverted relative to A, but capMesh normal (0,0,1) should face camera or follow planeB normal.
-                    // planeB.normal is correct.
+                    // PlaneB normal is -normal. CapMesh normal (0,0,1) aligns with it.
                     this.stencilCapB.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), planeB.normal);
                 }
             }
