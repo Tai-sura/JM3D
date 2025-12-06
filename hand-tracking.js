@@ -27,49 +27,49 @@ export class HandTracker {
         this.gestureStableCount = 0;
         this.smoothedY = new LerpValue(0, 0.15);
         
-        // Create Debug Overlay
+        // DEBUG: Create overlay
         this.createDebugOverlay();
     }
 
     createDebugOverlay() {
         this.debugEl = document.createElement('div');
-        this.debugEl.style.position = 'absolute';
-        this.debugEl.style.top = '0';
-        this.debugEl.style.left = '0';
-        this.debugEl.style.background = 'rgba(0, 0, 0, 0.7)';
-        this.debugEl.style.color = '#0f0';
-        this.debugEl.style.fontSize = '12px';
-        this.debugEl.style.fontFamily = 'monospace';
-        this.debugEl.style.padding = '4px';
-        this.debugEl.style.pointerEvents = 'none';
-        this.debugEl.style.zIndex = '10005'; // Super high
-        this.debugEl.style.display = 'none';
-        
-        if (this.video.parentElement) {
-            this.video.parentElement.appendChild(this.debugEl);
-        }
+        Object.assign(this.debugEl.style, {
+            position: 'fixed', top: '10px', left: '10px',
+            background: 'rgba(0,0,0,0.8)', color: '#0f0',
+            fontSize: '12px', fontFamily: 'monospace',
+            padding: '8px', zIndex: '99999', pointerEvents: 'none'
+        });
+        document.body.appendChild(this.debugEl);
     }
 
     updateDebugInfo(msg) {
         if (this.debugEl) {
-            this.debugEl.style.display = 'block';
             const v = this.video;
+            let trackInfo = 'No Stream';
+            if (v.srcObject && v.srcObject.getVideoTracks().length > 0) {
+                const track = v.srcObject.getVideoTracks()[0];
+                trackInfo = `Track: ${track.label} | Enabled: ${track.enabled} | Muted: ${track.muted} | State: ${track.readyState}`;
+            }
+
             const info = `
-                [DEBUG]<br>
+                [DEBUG MODE]<br>
                 Status: ${msg}<br>
-                Source: ${v.videoWidth}x${v.videoHeight}<br>
-                Render: ${v.clientWidth}x${v.clientHeight}<br>
-                State: ${v.readyState}<br>
-                Paused: ${v.paused}<br>
-                Muted: ${v.muted}
+                Video: ${v.videoWidth}x${v.videoHeight}<br>
+                ReadyState: ${v.readyState}<br>
+                Stream: ${trackInfo}<br>
+                Error: ${v.error ? v.error.code + '-' + v.error.message : 'None'}
             `;
             this.debugEl.innerHTML = info;
         }
     }
 
     async initLandmarker() {
+        // Skip AI for now to isolate camera issue
+        // this.updateDebugInfo('Skipping AI for camera test');
+        // return true; 
+        
+        // Actually, let's load it but not run detect loop immediately
         try {
-            this.updateDebugInfo('Loading AI...');
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
             this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
                 baseOptions: {
@@ -77,140 +77,91 @@ export class HandTracker {
                     delegate: "GPU"
                 },
                 runningMode: "VIDEO",
-                numHands: 1,
-                minHandDetectionConfidence: 0.6,
-                minHandPresenceConfidence: 0.6,
-                minTrackingConfidence: 0.6
+                numHands: 1
             });
-            this.updateDebugInfo('AI Ready');
             return true;
-        } catch (error) {
-            console.error('MediaPipe Init Error:', error);
-            this.updateDebugInfo('AI Error: ' + error.message);
+        } catch (e) {
+            console.error(e);
             return false;
         }
     }
 
     async start() {
         if (this.isRunning) {
-            this.stop();
-            const btn = document.getElementById('start-camera-btn');
-            if (btn) {
-                btn.textContent = '開啟鏡頭';
-                btn.style.background = '#22c55e';
-            }
-            this.hideError();
-            if (this.debugEl) this.debugEl.style.display = 'none';
+            // Reload page to stop cleanly
+            window.location.reload(); 
             return;
         }
 
+        const btn = document.getElementById('start-camera-btn');
+        if (btn) btn.style.display = 'none'; // Hide button to prevent double click
+
         if (window.location.protocol === 'file:') {
-            this.showError('Local file access blocked.');
-            return;
+            alert('Local file access blocked.'); return;
         }
         
         try {
-            const constraints = { 
-                video: { 
-                    width: { ideal: 1280 }, 
-                    height: { ideal: 720 }, 
-                    facingMode: "user" 
-                } 
-            };
-
-            this.updateDebugInfo('Req Stream...');
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            
-            this.video.srcObject = stream;
-            this.video.playsInline = true;
-            this.video.autoplay = true;
-            this.video.muted = true;
-            
-            // Force layout recalc
-            this.video.style.display = 'none';
-            this.video.offsetHeight; // trigger reflow
-            this.video.style.display = 'block';
-
-            // Wait for metadata
-            await new Promise((resolve) => {
-                if (this.video.readyState >= 1) resolve();
-                else {
-                    this.video.onloadedmetadata = () => resolve();
-                    setTimeout(resolve, 1000);
-                }
+            this.updateDebugInfo('Getting UserMedia...');
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: 1280, height: 720 } 
             });
+            
+            // NUCLEAR OPTION: Re-create video element in root body
+            // This bypasses ANY CSS issues in the original container
+            const oldVideo = this.video;
+            const newVideo = document.createElement('video');
+            newVideo.autoplay = true;
+            newVideo.playsInline = true;
+            newVideo.muted = true;
+            Object.assign(newVideo.style, {
+                position: 'fixed', bottom: '20px', left: '20px',
+                width: '320px', height: '240px',
+                border: '4px solid red', zIndex: '99999',
+                background: 'black', objectFit: 'cover'
+            });
+            document.body.appendChild(newVideo);
+            this.video = newVideo; // Swap reference
+            oldVideo.style.display = 'none'; // Hide old one
 
-            try {
-                await this.video.play();
-                this.updateDebugInfo('Playing...');
-            } catch (e) {
-                this.updateDebugInfo('Play Fail: ' + e.message);
-                throw e;
-            }
+            this.video.srcObject = stream;
+            
+            this.updateDebugInfo('Waiting for play...');
+            await this.video.play();
+            this.updateDebugInfo('Playing!');
 
             this.isRunning = true;
-            this.hideError();
             
-            const btn = document.getElementById('start-camera-btn');
-            if (btn) {
-                btn.textContent = '關閉鏡頭';
-                btn.style.background = '#ef4444';
-            }
+            // Update debug loop
+            setInterval(() => {
+                this.updateDebugInfo('Running');
+            }, 500);
 
-            this.debugTimer = setInterval(() => {
-                if (this.isRunning) this.updateDebugInfo('Running');
-            }, 1000);
-
+            // Init AI in background
             if (!this.handLandmarker) {
-                this.initLandmarker();
+                this.initLandmarker().then(() => {
+                    console.log('AI Loaded');
+                    this.loop(); // Start detecting only after AI loads
+                });
             }
-            
-            this.loop();
 
         } catch (err) {
-            console.error("Camera Error:", err);
-            this.showError('Error: ' + err.message);
-            this.isRunning = false;
-        }
-    }
-
-    showError(msg) {
-        const errEl = document.getElementById('camera-error');
-        const msgEl = document.getElementById('camera-error-msg');
-        if (errEl && msgEl) {
-            errEl.style.display = 'flex';
-            msgEl.innerHTML = msg;
-        }
-    }
-
-    hideError() {
-        const errEl = document.getElementById('camera-error');
-        if (errEl) errEl.style.display = 'none';
-        const btn = document.getElementById('start-camera-btn');
-        if (btn) btn.style.display = 'block';
-    }
-
-    stop() {
-        this.isRunning = false;
-        if (this.debugTimer) clearInterval(this.debugTimer);
-        if (this.video.srcObject) {
-            this.video.srcObject.getTracks().forEach(track => track.stop());
-            this.video.srcObject = null;
+            console.error(err);
+            this.updateDebugInfo('Error: ' + err.message);
+            alert('Camera Error: ' + err.message);
         }
     }
 
     async loop() {
-        if (!this.isRunning) return;
+        if (!this.isRunning || !this.handLandmarker) return;
 
-        if (this.handLandmarker && this.video.readyState >= 2 && this.video.videoWidth > 0) {
+        if (this.video.readyState >= 2 && this.video.videoWidth > 0) {
             try {
                 const results = await this.handLandmarker.detectForVideo(this.video, performance.now());
                 this.processResults(results);
             } catch (e) {
-                console.error('Detection error:', e);
+                console.error(e);
             }
         }
-
         requestAnimationFrame(() => this.loop());
     }
 
@@ -219,13 +170,13 @@ export class HandTracker {
         if (results.landmarks && results.landmarks.length > 0) {
             const hand = results.landmarks[0];
             const rawGesture = this.detectGesture(hand);
-            if (rawGesture === this.lastGesture) {
-                this.gestureStableCount++;
-            } else {
+            if (rawGesture === this.lastGesture) this.gestureStableCount++;
+            else {
                 this.gestureStableCount = 0;
                 this.lastGesture = rawGesture;
             }
             if (this.gestureStableCount > 3) gesture = rawGesture;
+            
             if (gesture === 'open') {
                 const p0 = hand[0];
                 const p9 = hand[9];
@@ -248,10 +199,7 @@ export class HandTracker {
     detectGesture(hand) {
         const wrist = hand[0];
         let curledFingers = 0;
-        const fingerIndices = [
-            { tip: 8, pip: 6 }, { tip: 12, pip: 10 }, 
-            { tip: 16, pip: 14 }, { tip: 20, pip: 18 }
-        ];
+        const fingerIndices = [{ tip: 8, pip: 6 }, { tip: 12, pip: 10 }, { tip: 16, pip: 14 }, { tip: 20, pip: 18 }];
         fingerIndices.forEach(({tip, pip}) => {
             const tipDist = Math.hypot(hand[tip].x - wrist.x, hand[tip].y - wrist.y, hand[tip].z - wrist.z);
             const pipDist = Math.hypot(hand[pip].x - wrist.x, hand[pip].y - wrist.y, hand[pip].z - wrist.z);
