@@ -15,7 +15,7 @@
         <div class="loading-progress" id="loading-progress">正在初始化系統...</div>
     </div>
 
-    <div id="app" style="display: none;">
+    <div id="app" style="display: grid;">
         
         <div class="top-bar">
             <div class="logo">
@@ -1004,14 +1004,8 @@
                 alert(`📖 使用說明\n\n1. 選擇左側圖形\n2. 操作模式：\n   - 滑鼠拖曳背景：旋轉視角\n   - 滑鼠控制平面：使用紅綠藍軸移動或旋轉切割面\n   - 手勢控制：張手移動、握拳切割\n3. 觀察物體上下分離與截面形狀`);
             };
 
-            try {
-                await tracker.start();
-                ui.setLoading(false);
-            } catch (e) {
-                console.error(e);
-                ui.setLoading(false); 
-                alert('無法啟動攝像頭，請檢查權限。');
-            }
+            // Remove auto camera start attempt that caused issues
+            ui.setLoading(false);
         }
 
         function onHandUpdate(data) {
