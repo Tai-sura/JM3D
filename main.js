@@ -79,6 +79,7 @@ async function main() {
         scene.onAnimate = () => {
             if (!scene.isSliced && scene.cuttingPlane && scene.objectMesh) {
                 const planeObj = scene.cuttingPlane;
+                // The visual plane mesh is rotated -90 deg on X, so its local normal is (0, 1, 0)
                 const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(planeObj.quaternion).normalize();
                 
                 const angle = Math.acos(Math.abs(normal.dot(new THREE.Vector3(0, 1, 0))));
@@ -189,6 +190,14 @@ function calculateMeshPlaneIntersection(mesh, plane) {
     function checkEdge(va, vb) {
         const da = plane.distanceToPoint(va);
         const db = plane.distanceToPoint(vb);
+        
+        // Check if point A is exactly on plane
+        if (Math.abs(da) < 1e-5) {
+            intersections.push(va.clone());
+            return;
+        }
+
+        // Check intersection
         if (da * db < 0) {
             const t = da / (da - db);
             const p = new THREE.Vector3().copy(va).lerp(vb, t);
@@ -227,8 +236,17 @@ function calculateMeshPlaneIntersection(mesh, plane) {
 
     const n = plane.normal;
     const basisX = new THREE.Vector3();
-    if (Math.abs(n.y) > 0.9) basisX.set(1, 0, 0); else basisX.set(0, 1, 0);
+    
+    // Robust basis generation
+    if (Math.abs(n.y) > 0.99) {
+        basisX.set(1, 0, 0); 
+    } else {
+        basisX.crossVectors(new THREE.Vector3(0, 1, 0), n).normalize();
+    }
+    
     const basisY = new THREE.Vector3().crossVectors(n, basisX).normalize();
+    
+    // Re-orthogonalize basisX to be sure
     basisX.crossVectors(basisY, n).normalize();
 
     const centroid = new THREE.Vector3();
