@@ -28,7 +28,7 @@ export class HandTracker {
         this.smoothedY = new LerpValue(0, 0.15);
     }
 
-    async init() {
+    async initLandmarker() {
         try {
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
             this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
@@ -57,13 +57,12 @@ export class HandTracker {
             if (btn) {
                 btn.textContent = '開啟鏡頭';
                 btn.style.background = '#22c55e';
-                // Re-binding is handled by main.js logic or permanent listener
             }
             this.hideError();
             return;
         }
 
-        // Check for File Protocol immediately to save user frustration
+        // Check for File Protocol
         if (window.location.protocol === 'file:') {
             this.showError(`
                 <div style="font-weight:bold; font-size:1.1rem; margin-bottom:10px;">瀏覽器安全性限制</div>
@@ -78,16 +77,9 @@ export class HandTracker {
             }
             return;
         }
-
-        if (!this.handLandmarker) {
-            const success = await this.init();
-            if (!success) {
-                this.showError("MediaPipe 初始化失敗<br>請檢查網絡連線");
-                return;
-            }
-        }
         
         try {
+            // Step 1: Request Camera Permission & Stream FIRST
             const constraints = { 
                 video: { 
                     width: { ideal: 1280 }, 
@@ -96,23 +88,45 @@ export class HandTracker {
                 } 
             };
 
+            console.log('Requesting camera stream...');
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            console.log('Camera stream acquired:', stream);
+
+            // Step 2: Set Video Attributes explicitly
             this.video.srcObject = stream;
+            this.video.playsInline = true;
+            this.video.autoplay = true;
+            this.video.muted = true;
             
-            // Wait for video to be ready
-            this.video.onloadeddata = () => {
-                this.isRunning = true;
-                this.video.play();
-                this.hideError();
-                this.loop();
-                const btn = document.getElementById('start-camera-btn');
-                if (btn) {
-                    btn.textContent = '關閉鏡頭';
-                    btn.style.background = '#ef4444';
+            // Step 3: Play video and handle promise
+            await this.video.play();
+            console.log('Video playback started');
+
+            this.isRunning = true;
+            this.hideError();
+            
+            const btn = document.getElementById('start-camera-btn');
+            if (btn) {
+                btn.textContent = '關閉鏡頭';
+                btn.style.background = '#ef4444';
+            }
+
+            // Step 4: Initialize AI in background (don't block video)
+            if (!this.handLandmarker) {
+                console.log('Initializing Hand Landmarker...');
+                const success = await this.initLandmarker();
+                if (!success) {
+                    console.error('MediaPipe failed to load, but camera is running.');
+                    // Can optionally show a toast warning here, but keep camera running
+                } else {
+                    console.log('Hand Landmarker ready');
                 }
-            };
+            }
+            
+            this.loop();
+
         } catch (err) {
-            console.error("Camera Error:", err);
+            console.error("Camera/Init Error:", err);
             let msg = '無法啟動鏡頭';
             
             if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
@@ -127,9 +141,10 @@ export class HandTracker {
             const btn = document.getElementById('start-camera-btn');
             if (btn) {
                 btn.textContent = '重試開啟';
-                btn.style.background = '#eab308'; // Yellow for retry
+                btn.style.background = '#eab308';
                 btn.style.display = 'block';
             }
+            this.isRunning = false;
         }
     }
 
@@ -160,7 +175,7 @@ export class HandTracker {
     async loop() {
         if (!this.isRunning) return;
 
-        if (this.video.readyState >= 2) {
+        if (this.handLandmarker && this.video.readyState >= 2) {
             const results = await this.handLandmarker.detectForVideo(this.video, performance.now());
             this.processResults(results);
         }
