@@ -219,7 +219,11 @@ export class HandTracker {
             }
 
             if (this.gestureStableCount > 3) {
-                gesture = rawGesture;
+                // Dynamic threshold: require longer hold for fist to prevent accidental triggers
+                const threshold = (rawGesture === 'fist') ? 10 : 3;
+                if (this.gestureStableCount > threshold) {
+                    gesture = rawGesture;
+                }
             }
 
             if (gesture === 'open') {
@@ -253,12 +257,16 @@ export class HandTracker {
         fingerIndices.forEach(({tip, pip}) => {
             const tipDist = Math.hypot(hand[tip].x - wrist.x, hand[tip].y - wrist.y, hand[tip].z - wrist.z);
             const pipDist = Math.hypot(hand[pip].x - wrist.x, hand[pip].y - wrist.y, hand[pip].z - wrist.z);
-            if (tipDist < pipDist * 1.1) curledFingers++;
+            // Stricter check: tip must be significantly closer to wrist than PIP (bent inwards)
+            if (tipDist < pipDist * 0.85) curledFingers++;
         });
         const thumbTip = hand[4];
         const pinkyBase = hand[17];
-        if (Math.hypot(thumbTip.x - pinkyBase.x, thumbTip.y - pinkyBase.y) < 0.15) curledFingers++;
-        if (curledFingers >= 4) return 'fist';
+        // Stricter thumb check
+        if (Math.hypot(thumbTip.x - pinkyBase.x, thumbTip.y - pinkyBase.y) < 0.12) curledFingers++;
+        
+        // Require ALL 5 fingers to be curled for a valid fist
+        if (curledFingers >= 5) return 'fist';
         if (curledFingers <= 1) return 'open';
         return 'none';
     }
