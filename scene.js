@@ -171,8 +171,8 @@ export class SceneManager {
         if (this.isSliced || !this.cuttingPlane) return;
         
         // Increase smoothing (lower factor = more smoothing/lag)
-        // Increased to 0.7 for high sensitivity
-        const smoothFactor = 0.7; 
+        // Increased to 0.65 for high sensitivity
+        const smoothFactor = 0.65; 
         this.currentRoll = THREE.MathUtils.lerp(this.currentRoll, roll, smoothFactor);
         
         this.cuttingPlane.rotation.z = this.currentRoll;
@@ -626,9 +626,12 @@ export class SceneManager {
                 // Update Stencil Meshes Position
                 if (this.stencilCapA) {
                     this.stencilCapA.group.position.copy(this.pieceA.position);
+                    this.stencilCapA.group.quaternion.copy(this.pieceA.quaternion);
+                    
                     // Cap Plane must match the clipping plane exactly
                     const coplanarPoint = new THREE.Vector3().copy(normal).multiplyScalar(-planeA.constant);
                     this.stencilCapA.capMesh.position.copy(coplanarPoint);
+                    this.stencilCapA.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
                 }
             }
             
@@ -643,8 +646,13 @@ export class SceneManager {
                 // Update Stencil Meshes Position
                 if (this.stencilCapB) {
                     this.stencilCapB.group.position.copy(this.pieceB.position);
+                    this.stencilCapB.group.quaternion.copy(this.pieceB.quaternion);
+                    
                     const coplanarPointB = new THREE.Vector3().copy(planeB.normal).multiplyScalar(-planeB.constant);
                     this.stencilCapB.capMesh.position.copy(coplanarPointB);
+                    // For Plane B, normal is inverted relative to A, but capMesh normal (0,0,1) should face camera or follow planeB normal.
+                    // planeB.normal is correct.
+                    this.stencilCapB.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), planeB.normal);
                 }
             }
         } else {
