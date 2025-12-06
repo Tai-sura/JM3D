@@ -27,7 +27,7 @@ export class HandTracker {
         this.gestureStableCount = 0;
         this.smoothedY = new LerpValue(0, 0.15);
         
-        // Create Debug Overlay
+        // Keep debug overlay for now
         this.createDebugOverlay();
     }
 
@@ -41,16 +41,11 @@ export class HandTracker {
         this.debugEl.style.fontSize = '10px';
         this.debugEl.style.padding = '4px';
         this.debugEl.style.pointerEvents = 'none';
-        this.debugEl.style.zIndex = '100';
-        this.debugEl.style.display = 'none'; // Initially hidden, shown on start
+        this.debugEl.style.zIndex = '2000'; // High z-index
+        this.debugEl.style.display = 'none';
         
-        // Attach to parent of video if possible
         if (this.video.parentElement) {
             this.video.parentElement.appendChild(this.debugEl);
-            // Ensure parent is relative so absolute positioning works
-            if (getComputedStyle(this.video.parentElement).position === 'static') {
-                this.video.parentElement.style.position = 'relative';
-            }
         }
     }
 
@@ -58,13 +53,12 @@ export class HandTracker {
         if (this.debugEl) {
             this.debugEl.style.display = 'block';
             const v = this.video;
-            const stateNames = ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'];
             const info = `
                 Status: ${msg}<br>
-                Size: ${v.videoWidth}x${v.videoHeight}<br>
-                Ready: ${v.readyState} (${stateNames[v.readyState] || '?'})<br>
-                Paused: ${v.paused}<br>
-                Muted: ${v.muted}
+                Src: ${v.videoWidth}x${v.videoHeight}<br>
+                Client: ${v.clientWidth}x${v.clientHeight}<br>
+                State: ${v.readyState}<br>
+                Paused: ${v.paused}
             `;
             this.debugEl.innerHTML = info;
         }
@@ -72,7 +66,7 @@ export class HandTracker {
 
     async initLandmarker() {
         try {
-            this.updateDebugInfo('Loading AI Model...');
+            this.updateDebugInfo('Loading AI...');
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
             this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
                 baseOptions: {
@@ -108,7 +102,7 @@ export class HandTracker {
         }
 
         if (window.location.protocol === 'file:') {
-            this.showError('Local file access blocked. Use local server.');
+            this.showError('Local file access blocked.');
             return;
         }
         
@@ -121,31 +115,19 @@ export class HandTracker {
                 } 
             };
 
-            this.updateDebugInfo('Requesting Stream...');
-            console.log('Requesting camera stream...');
+            this.updateDebugInfo('Req Stream...');
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             
-            this.updateDebugInfo('Stream Acquired. Attaching...');
-            console.log('Stream acquired:', stream);
-
-            // Critical: Wait for metadata before playing
             this.video.srcObject = stream;
             this.video.playsInline = true;
-            this.video.muted = true; // Must be muted for autoplay
+            this.video.autoplay = true;
+            this.video.muted = true;
 
-            // Reset styles that might hide video
-            this.video.style.display = 'block';
-            this.video.style.visibility = 'visible';
-            this.video.style.opacity = '1';
-            
-            // Wait for metadata to ensure we have dimensions
+            // Wait for metadata
             await new Promise((resolve) => {
                 this.video.onloadedmetadata = () => {
-                    console.log('Metadata loaded:', this.video.videoWidth, this.video.videoHeight);
-                    this.updateDebugInfo('Meta Loaded');
                     resolve();
                 };
-                // Timeout fallback in case event doesn't fire (sometimes happens if cached)
                 setTimeout(resolve, 1000);
             });
 
@@ -153,7 +135,6 @@ export class HandTracker {
                 await this.video.play();
                 this.updateDebugInfo('Playing...');
             } catch (e) {
-                console.error('Play failed:', e);
                 this.updateDebugInfo('Play Fail: ' + e.message);
                 throw e;
             }
@@ -167,25 +148,21 @@ export class HandTracker {
                 btn.style.background = '#ef4444';
             }
 
-            // Start Debug Loop to update stats
+            // Debug loop
             this.debugTimer = setInterval(() => {
                 if (this.isRunning) this.updateDebugInfo('Running');
             }, 1000);
 
-            // Initialize AI
+            // Init AI
             if (!this.handLandmarker) {
-                this.updateDebugInfo('Init AI...');
-                // Don't await here to keep video running
-                this.initLandmarker().then(success => {
-                    if (!success) console.warn('AI Failed');
-                });
+                this.initLandmarker();
             }
             
             this.loop();
 
         } catch (err) {
             console.error("Camera Error:", err);
-            this.showError('Camera Error: ' + err.message);
+            this.showError('Error: ' + err.message);
             this.isRunning = false;
         }
     }
@@ -218,7 +195,6 @@ export class HandTracker {
     async loop() {
         if (!this.isRunning) return;
 
-        // Only detect if video has data and dimensions
         if (this.handLandmarker && this.video.readyState >= 2 && this.video.videoWidth > 0) {
             try {
                 const results = await this.handLandmarker.detectForVideo(this.video, performance.now());
