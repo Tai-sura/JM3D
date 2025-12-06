@@ -192,67 +192,180 @@ export class SceneManager {
 
     createCutPieces(position, normal) {
         const shape = SHAPES[this.currentShapeType];
-        const geometry = shape.geometry();
+        const baseGeometry = shape.geometry();
 
+        // 1. Create Clipping Planes
         const planeA = new THREE.Plane();
         planeA.setFromNormalAndCoplanarPoint(normal, position);
+        const planeB = planeA.clone().negate();
+
+        // 2. Setup Piece A (Upper)
         const materialA = new THREE.MeshStandardMaterial({
             color: 0x60a5fa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide,
-            clippingPlanes: [planeA], clipShadows: true
+            clippingPlanes: [planeA], clipShadows: true,
+            stencilWrite: true, stencilRef: 0, stencilFunc: THREE.AlwaysStencilFunc, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
         });
-        this.pieceA = new THREE.Mesh(geometry.clone(), materialA);
+        this.pieceA = new THREE.Mesh(baseGeometry.clone(), materialA);
         this.scene.add(this.pieceA);
 
-        const planeB = planeA.clone().negate();
+        // 3. Setup Piece B (Lower)
         const materialB = new THREE.MeshStandardMaterial({
             color: 0xa78bfa, metalness: 0.2, roughness: 0.4, side: THREE.DoubleSide,
-            clippingPlanes: [planeB], clipShadows: true
+            clippingPlanes: [planeB], clipShadows: true,
+            stencilWrite: true, stencilRef: 0, stencilFunc: THREE.AlwaysStencilFunc, stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
         });
-        this.pieceB = new THREE.Mesh(geometry.clone(), materialB);
+        this.pieceB = new THREE.Mesh(baseGeometry.clone(), materialB);
         this.scene.add(this.pieceB);
 
-        // Generate Caps for ANY angle using the intersection logic
-        const mathPlane = new THREE.Plane(normal, -normal.dot(position));
-        const polygon = this.calculateMeshPlaneIntersection(this.objectMesh, mathPlane, this.cuttingPlane);
+        // 4. Create Stencil Caps (The "Solid" fill)
+        const createStencilLogic = (mesh, plane, color, renderOrderBase) => {
+            const group = new THREE.Group();
+            this.scene.add(group);
 
-        if (polygon && polygon.length >= 3) {
-            const shape2D = new THREE.Shape();
-            shape2D.moveTo(polygon[0].x, polygon[0].y);
-            for (let i = 1; i < polygon.length; i++) {
-                shape2D.lineTo(polygon[i].x, polygon[i].y);
+            // Pass 1: Back faces, Increment Stencil
+            const matBack = new THREE.MeshBasicMaterial({
+                colorWrite: false, depthWrite: false, side: THREE.BackSide,
+                clippingPlanes: [plane],
+                stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, 
+                stencilFail: THREE.IncrementWrapStencilOp, stencilZFail: THREE.IncrementWrapStencilOp, stencilZPass: THREE.IncrementWrapStencilOp
+            });
+            const meshBack = new THREE.Mesh(mesh.geometry.clone(), matBack);
+            meshBack.renderOrder = renderOrderBase;
+            group.add(meshBack);
+
+            // Pass 2: Front faces, Decrement Stencil
+            const matFront = new THREE.MeshBasicMaterial({
+                colorWrite: false, depthWrite: false, side: THREE.FrontSide,
+                clippingPlanes: [plane],
+                stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc,
+                stencilFail: THREE.DecrementWrapStencilOp, stencilZFail: THREE.DecrementWrapStencilOp, stencilZPass: THREE.DecrementWrapStencilOp
+            });
+            const meshFront = new THREE.Mesh(mesh.geometry.clone(), matFront);
+            meshFront.renderOrder = renderOrderBase + 1;
+            group.add(meshFront);
+
+            // Pass 3: The Cap Plane
+            const planeGeom = new THREE.PlaneGeometry(100, 100);
+            const matPlane = new THREE.MeshStandardMaterial({
+                color: color, side: THREE.DoubleSide, 
+                metalness: 0.1, roughness: 0.1,
+                clippingPlanes: [plane],
+                stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, stencilRef: 0,
+            });
+            const capMesh = new THREE.Mesh(planeGeom, matPlane);
+            capMesh.renderOrder = renderOrderBase + 2;
+            
+            // Align cap mesh to the clipping plane initially
+            capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), plane.normal);
+            capMesh.position.copy(new THREE.Vector3().copy(plane.normal).multiplyScalar(-plane.constant));
+            
+            this.scene.add(capMesh);
+
+            return { group, capMesh, meshBack, meshFront };
+        };
+
+        // Create caps for both pieces
+        this.stencilCapA = createStencilLogic(this.pieceA, planeA, 0xfbbf24, 1);
+        this.stencilCapB = createStencilLogic(this.pieceB, planeB, 0xfbbf24, 10);
+    }
+
+    animate() {
+        requestAnimationFrame(() => this.animate());
+        if (this.controls) this.controls.update();
+        
+        if (this.onAnimate) this.onAnimate();
+
+        if (this.isSliced) {
+            const separationSpeed = 0.05;
+            const maxSeparation = 1.5;
+
+            if (this.transformControls) this.transformControls.visible = false;
+            
+            const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cuttingPlane.quaternion).normalize();
+            const initialPos = this.cuttingPlane.position;
+
+            if (this.pieceA) {
+                this.pieceA.position.y = THREE.MathUtils.lerp(this.pieceA.position.y, maxSeparation, separationSpeed);
+                
+                const posA = initialPos.clone().add(this.pieceA.position);
+                const planeA = this.pieceA.material.clippingPlanes[0];
+                if (planeA) planeA.constant = -normal.dot(posA);
+
+                if (this.stencilCapA) {
+                    this.stencilCapA.group.position.copy(this.pieceA.position);
+                    const coplanarPoint = new THREE.Vector3().copy(normal).multiplyScalar(-planeA.constant);
+                    this.stencilCapA.capMesh.position.copy(coplanarPoint);
+                }
             }
             
-            const capGeometry = new THREE.ShapeGeometry(shape2D);
-            
-            const capMaterial = new THREE.MeshStandardMaterial({
-                color: 0xfbbf24, side: THREE.DoubleSide, emissive: 0xfbbf24, emissiveIntensity: 0.4
-            });
+            if (this.pieceB) {
+                this.pieceB.position.y = THREE.MathUtils.lerp(this.pieceB.position.y, -maxSeparation, separationSpeed);
+                
+                const posB = initialPos.clone().add(this.pieceB.position);
+                const planeB = this.pieceB.material.clippingPlanes[0];
+                if (planeB) planeB.constant = normal.dot(posB);
 
-            // Create meshes
-            this.cutSurfaceUpper = new THREE.Mesh(capGeometry, capMaterial);
-            this.cutSurfaceLower = new THREE.Mesh(capGeometry.clone(), capMaterial);
+                if (this.stencilCapB) {
+                    this.stencilCapB.group.position.copy(this.pieceB.position);
+                    const coplanarPointB = new THREE.Vector3().copy(planeB.normal).multiplyScalar(-planeB.constant);
+                    this.stencilCapB.capMesh.position.copy(coplanarPointB);
+                }
+            }
+        } else {
+            if (this.cuttingPlane) {
+                this.currentY = this.cuttingPlane.position.y;
+            }
+        }
 
-            // Align caps to the cutting plane
-            this.cutSurfaceUpper.position.copy(position);
-            this.cutSurfaceLower.position.copy(position);
-            
-            this.cutSurfaceUpper.quaternion.copy(this.cuttingPlane.quaternion);
-            this.cutSurfaceLower.quaternion.copy(this.cuttingPlane.quaternion);
-
-            // Rotate -90 around X to map XY geometry to XZ plane (matches visual plane basis)
-            this.cutSurfaceUpper.rotateX(-Math.PI / 2);
-            this.cutSurfaceLower.rotateX(-Math.PI / 2);
-            
-            // Initial Offsets
-            this.cutSurfaceUpper.position.addScaledVector(normal, -0.01);
-            this.cutSurfaceLower.position.addScaledVector(normal, 0.01);
-
-            this.scene.add(this.cutSurfaceUpper);
-            this.scene.add(this.cutSurfaceLower);
+        if (this.renderer && this.scene && this.camera) {
+            this.renderer.render(this.scene, this.camera);
         }
     }
 
-    // ========== Geometric Helpers ==========
+    reset() {
+        this.isSliced = false;
+        this.currentRoll = 0;
+        this.currentY = 0;
+        
+        if (this.pieceA) { this.scene.remove(this.pieceA); this.pieceA = null; }
+        if (this.pieceB) { this.scene.remove(this.pieceB); this.pieceB = null; }
+        
+        // Cleanup Stencil Caps
+        if (this.stencilCapA) {
+            this.scene.remove(this.stencilCapA.group); // Remove helper group
+            this.stencilCapA.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+            this.scene.remove(this.stencilCapA.capMesh);
+            this.stencilCapA.capMesh.geometry.dispose();
+            this.stencilCapA.capMesh.material.dispose();
+            this.stencilCapA = null;
+        }
+        if (this.stencilCapB) {
+            this.scene.remove(this.stencilCapB.group);
+            this.stencilCapB.group.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+            this.scene.remove(this.stencilCapB.capMesh);
+            this.stencilCapB.capMesh.geometry.dispose();
+            this.stencilCapB.capMesh.material.dispose();
+            this.stencilCapB = null;
+        }
+        
+        if (this.objectMesh) {
+            this.objectMesh.visible = true;
+            this.objectMesh.position.set(0,0,0);
+        }
+        if (this.cuttingPlane) {
+            this.cuttingPlane.visible = true;
+            this.cuttingPlane.position.set(0, 0, 0);
+            this.cuttingPlane.quaternion.set(0,0,0,1);
+            this.cuttingPlane.rotation.z = 0;
+        }
+        if (this.transformControls) {
+            this.transformControls.attach(this.cuttingPlane);
+            this.transformControls.visible = true;
+            this.transformControls.enabled = true;
+        }
+    }
+
+    // ========== Geometric Helpers (Intersection Logic for UI Only) ==========
     calculateMeshPlaneIntersection(mesh, plane, planeObj = null) {
         const geometry = mesh.geometry;
         const posAttr = geometry.attributes.position;
@@ -540,5 +653,3 @@ export class SceneManager {
         }
     }
 }
-
-
