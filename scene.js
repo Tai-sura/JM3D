@@ -244,16 +244,16 @@ export class SceneManager {
             const matPlane = new THREE.MeshStandardMaterial({
                 color: 0xFFFF00, 
                 emissive: 0x333300,
-                side: THREE.DoubleSide, 
+                side: THREE.FrontSide, 
                 metalness: 0.1, roughness: 0.1,
                 stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, stencilRef: 0,
                 polygonOffset: true,
-                polygonOffsetFactor: -1,
-                polygonOffsetUnits: -1
+                polygonOffsetFactor: -2,
+                polygonOffsetUnits: -2
             });
             const capMesh = new THREE.Mesh(planeGeom, matPlane);
             capMesh.renderOrder = renderOrderBase + 2;
-            capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), plane.normal);
+            capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), plane.normal.clone().negate());
             capMesh.position.copy(new THREE.Vector3().copy(plane.normal).multiplyScalar(-plane.constant));
             this.scene.add(capMesh);
 
@@ -302,8 +302,11 @@ export class SceneManager {
 
                 if (this.stencilCapA) {
                     this.stencilCapA.group.position.copy(this.pieceA.position);
+                    this.stencilCapA.group.quaternion.copy(this.pieceA.quaternion);
+                    
                     const coplanarPoint = new THREE.Vector3().copy(normal).multiplyScalar(-planeA.constant);
                     this.stencilCapA.capMesh.position.copy(coplanarPoint);
+                    this.stencilCapA.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal.clone().negate());
                 }
             }
             
@@ -316,8 +319,11 @@ export class SceneManager {
 
                 if (this.stencilCapB) {
                     this.stencilCapB.group.position.copy(this.pieceB.position);
+                    this.stencilCapB.group.quaternion.copy(this.pieceB.quaternion);
+                    
                     const coplanarPointB = new THREE.Vector3().copy(planeB.normal).multiplyScalar(-planeB.constant);
                     this.stencilCapB.capMesh.position.copy(coplanarPointB);
+                    this.stencilCapB.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), planeB.normal.clone().negate());
                 }
             }
         } else {
@@ -339,6 +345,14 @@ export class SceneManager {
         if (this.pieceA) { this.scene.remove(this.pieceA); this.pieceA = null; }
         if (this.pieceB) { this.scene.remove(this.pieceB); this.pieceB = null; }
         
+        // Remove Stencil Clearer
+        if (this.stencilClearer) {
+            this.scene.remove(this.stencilClearer);
+            this.stencilClearer.geometry.dispose();
+            this.stencilClearer.material.dispose();
+            this.stencilClearer = null;
+        }
+
         // Cleanup Stencil Caps
         if (this.stencilCapA) {
             this.scene.remove(this.stencilCapA.group); // Remove helper group
@@ -569,108 +583,10 @@ export class SceneManager {
         return Math.max(maxX - minX, maxY - minY);
     }
 
-    reset() {
-        this.isSliced = false;
-        this.currentRoll = 0;
-        this.currentY = 0;
-        
-        if (this.pieceA) { this.scene.remove(this.pieceA); this.pieceA = null; }
-        if (this.pieceB) { this.scene.remove(this.pieceB); this.pieceB = null; }
-        if (this.cutSurfaceUpper) { this.scene.remove(this.cutSurfaceUpper); this.cutSurfaceUpper = null; }
-        if (this.cutSurfaceLower) { this.scene.remove(this.cutSurfaceLower); this.cutSurfaceLower = null; }
-        
-        if (this.objectMesh) {
-            this.objectMesh.visible = true;
-            this.objectMesh.position.set(0,0,0);
-        }
-        if (this.cuttingPlane) {
-            this.cuttingPlane.visible = true;
-            this.cuttingPlane.position.set(0, 0, 0);
-            this.cuttingPlane.quaternion.set(0,0,0,1);
-            this.cuttingPlane.rotation.z = 0;
-        }
-        if (this.transformControls) {
-            this.transformControls.attach(this.cuttingPlane);
-            this.transformControls.visible = true;
-            this.transformControls.enabled = true;
-        }
-    }
-
     onWindowResize() {
         if (!this.camera || !this.renderer) return;
         this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-    }
-
-    animate() {
-        requestAnimationFrame(() => this.animate());
-        if (this.controls) this.controls.update();
-        
-        if (this.onAnimate) this.onAnimate();
-
-        if (this.isSliced) {
-            const separationSpeed = 0.05;
-            const maxSeparation = 1.5;
-            
-            // Smoothly update separation value
-            if (this.separationValue === undefined) this.separationValue = 0;
-            this.separationValue = THREE.MathUtils.lerp(this.separationValue, maxSeparation, separationSpeed);
-
-            if (this.transformControls) this.transformControls.visible = false;
-            
-            // Recalculate normal and initial position from the frozen cutting plane
-            const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cuttingPlane.quaternion).normalize();
-            const initialPos = this.cuttingPlane.position;
-
-            if (this.pieceA) {
-                // Move Piece A along the normal (Up/Normal direction)
-                this.pieceA.position.copy(normal).multiplyScalar(this.separationValue);
-                
-                // Update Clipping Plane Constant
-                const posA = initialPos.clone().add(this.pieceA.position);
-                const planeA = this.pieceA.material.clippingPlanes[0];
-                if (planeA) planeA.constant = -normal.dot(posA);
-                
-                // Update Stencil Meshes
-                if (this.stencilCapA) {
-                    this.stencilCapA.group.position.copy(this.pieceA.position);
-                    this.stencilCapA.group.quaternion.copy(this.pieceA.quaternion);
-                    
-                    const coplanarPoint = new THREE.Vector3().copy(normal).multiplyScalar(-planeA.constant);
-                    this.stencilCapA.capMesh.position.copy(coplanarPoint);
-                    this.stencilCapA.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-                }
-            }
-            
-            if (this.pieceB) {
-                // Move Piece B along the negative normal (Down/Away direction)
-                this.pieceB.position.copy(normal).multiplyScalar(-this.separationValue);
-                
-                // Update Clipping Plane Constant
-                const posB = initialPos.clone().add(this.pieceB.position);
-                const planeB = this.pieceB.material.clippingPlanes[0];
-                if (planeB) planeB.constant = normal.dot(posB);
-                
-                // Update Stencil Meshes
-                if (this.stencilCapB) {
-                    this.stencilCapB.group.position.copy(this.pieceB.position);
-                    this.stencilCapB.group.quaternion.copy(this.pieceB.quaternion);
-                    
-                    const coplanarPointB = new THREE.Vector3().copy(planeB.normal).multiplyScalar(-planeB.constant);
-                    this.stencilCapB.capMesh.position.copy(coplanarPointB);
-                    // PlaneB normal is -normal. CapMesh normal (0,0,1) aligns with it.
-                    this.stencilCapB.capMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), planeB.normal);
-                }
-            }
-        } else {
-            if (this.cuttingPlane) {
-                this.currentY = this.cuttingPlane.position.y;
-            }
-        }
-
-        if (this.renderer && this.scene && this.camera) {
-            this.renderer.render(this.scene, this.camera);
-        }
     }
 }
