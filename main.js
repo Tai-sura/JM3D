@@ -90,7 +90,7 @@ async function main() {
                 const constant = -normal.dot(planeObj.position);
                 const mathPlane = new THREE.Plane(normal, constant);
 
-                const polygon = calculateMeshPlaneIntersection(scene.objectMesh, mathPlane);
+                const polygon = calculateMeshPlaneIntersection(scene.objectMesh, mathPlane, scene.cuttingPlane);
                 
                 let data = null;
                 if (polygon && polygon.length > 2) {
@@ -174,7 +174,7 @@ function onHandUpdate(data) {
 }
 
 // ========== Geometric Helpers ==========
-function calculateMeshPlaneIntersection(mesh, plane) {
+function calculateMeshPlaneIntersection(mesh, plane, planeObj = null) {
     const geometry = mesh.geometry;
     const posAttr = geometry.attributes.position;
     const indexAttr = geometry.index;
@@ -234,36 +234,104 @@ function calculateMeshPlaneIntersection(mesh, plane) {
 
     if (unique.length < 3) return null;
 
-    const n = plane.normal;
-    const basisX = new THREE.Vector3();
-    
-    // Robust basis generation
-    if (Math.abs(n.y) > 0.99) {
-        basisX.set(1, 0, 0); 
+    let basisX, basisY, origin;
+
+    if (planeObj) {
+        // Use planeObj's local system for accurate clipping
+        origin = planeObj.position;
+        const q = planeObj.quaternion;
+        
+        // Visual plane is defined as XZ plane in the group local space
+        // (PlaneGeometry is XY, rotated -90 on X -> XZ)
+        basisX = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
+        basisY = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
     } else {
-        basisX.crossVectors(new THREE.Vector3(0, 1, 0), n).normalize();
+        // Fallback to robust arbitrary basis
+        const n = plane.normal;
+        if (Math.abs(n.y) > 0.99) {
+            basisX = new THREE.Vector3(1, 0, 0); 
+        } else {
+            basisX = new THREE.Vector3(0, 1, 0).cross(n).normalize();
+        }
+        basisY = new THREE.Vector3().crossVectors(n, basisX).normalize();
+        basisX.crossVectors(basisY, n).normalize(); // Re-orthogonalize
+        
+        // Calculate centroid for origin
+        origin = new THREE.Vector3();
+        for (let p of unique) origin.add(p);
+        origin.divideScalar(unique.length);
     }
-    
-    const basisY = new THREE.Vector3().crossVectors(n, basisX).normalize();
-    
-    // Re-orthogonalize basisX to be sure
-    basisX.crossVectors(basisY, n).normalize();
 
-    const centroid = new THREE.Vector3();
-    for (let p of unique) centroid.add(p);
-    centroid.divideScalar(unique.length);
-
-    const points2D = unique.map(p => {
-        const diff = new THREE.Vector3().subVectors(p, centroid);
+    // Project points to 2D
+    let points2D = unique.map(p => {
+        const diff = new THREE.Vector3().subVectors(p, origin);
         return {
             x: diff.dot(basisX),
             y: diff.dot(basisY)
         };
     });
 
-    points2D.sort((a, b) => Math.atan2(a.y, a.x) - Math.atan2(b.y, b.x));
+    // Calculate 2D centroid for sorting
+    const center = { x: 0, y: 0 };
+    for (let p of points2D) { center.x += p.x; center.y += p.y; }
+    center.x /= points2D.length;
+    center.y /= points2D.length;
+
+    // Sort angularly around centroid
+    points2D.sort((a, b) => Math.atan2(a.y - center.y, a.x - center.x) - Math.atan2(b.y - center.y, b.x - center.x));
     
+    // Clip polygon if plane object is provided (visual bounds)
+    if (planeObj) {
+        // The plane geometry is 7x7, so bounds are +/- 3.5
+        const limit = 3.5;
+        points2D = clipPolygonToRect(points2D, -limit, -limit, limit, limit);
+    }
+
     return points2D;
+}
+
+function clipPolygonToRect(points, minX, minY, maxX, maxY) {
+    if (!points || points.length < 3) return points;
+
+    let outputList = points;
+
+    const clipEdge = (inputList, isInside, intersection) => {
+        const output = [];
+        if (inputList.length === 0) return output;
+
+        let s = inputList[inputList.length - 1];
+        for (const e of inputList) {
+            if (isInside(e)) {
+                if (!isInside(s)) {
+                    output.push(intersection(s, e));
+                }
+                output.push(e);
+            } else if (isInside(s)) {
+                output.push(intersection(s, e));
+            }
+            s = e;
+        }
+        return output;
+    };
+
+    // Left
+    outputList = clipEdge(outputList, p => p.x >= minX, (p1, p2) => ({ 
+        x: minX, y: p1.y + (p2.y - p1.y) * (minX - p1.x) / (p2.x - p1.x) 
+    }));
+    // Right
+    outputList = clipEdge(outputList, p => p.x <= maxX, (p1, p2) => ({ 
+        x: maxX, y: p1.y + (p2.y - p1.y) * (maxX - p1.x) / (p2.x - p1.x) 
+    }));
+    // Bottom
+    outputList = clipEdge(outputList, p => p.y >= minY, (p1, p2) => ({ 
+        x: p1.x + (p2.x - p1.x) * (minY - p1.y) / (p2.y - p1.y), y: minY 
+    }));
+    // Top
+    outputList = clipEdge(outputList, p => p.y <= maxY, (p1, p2) => ({ 
+        x: p1.x + (p2.x - p1.x) * (maxY - p1.y) / (p2.y - p1.y), y: maxY 
+    }));
+
+    return outputList;
 }
 
 function calculatePolygonArea(points) {
