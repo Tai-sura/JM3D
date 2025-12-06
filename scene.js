@@ -171,8 +171,8 @@ export class SceneManager {
         if (this.isSliced || !this.cuttingPlane) return;
         
         // Increase smoothing (lower factor = more smoothing/lag)
-        // Increased to 0.8 for high sensitivity
-        const smoothFactor = 0.8; 
+        // Increased to 0.7 for high sensitivity
+        const smoothFactor = 0.7; 
         this.currentRoll = THREE.MathUtils.lerp(this.currentRoll, roll, smoothFactor);
         
         this.cuttingPlane.rotation.z = this.currentRoll;
@@ -540,4 +540,5 @@ export class SceneManager {
         }
     }
 }
+
 
